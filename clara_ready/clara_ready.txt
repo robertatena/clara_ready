@@ -1,0 +1,13 @@
+clara_ready/
+  app.py
+  requirements.txt
+  .streamlit/
+    secrets.toml   (você cria com suas chaves)
+  modules/
+    pdf_utils.py
+    analysis.py
+    rules.py
+    stripe_utils.py
+    storage.py
+  assets/
+    style.css
