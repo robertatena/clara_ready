@@ -13,6 +13,25 @@ APP_TITLE = "CLARA • Análise de Contratos"
 VERSION = "v11.0"
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
+# --- tratar retorno do Stripe ---
+qs = st.query_params
+if qs.get("success") == "true" and qs.get("session_id"):
+    ok, data = verify_checkout_session(qs["session_id"])
+    if ok:
+        st.session_state.premium = True
+        log_subscriber(
+            email=st.session_state.profile.get("email", ""),
+            name=st.session_state.profile.get("nome", ""),
+            stripe_customer_id=(data.get("customer") or data.get("subscription", {}).get("customer") or "")
+        )
+        st.success("Pagamento confirmado! Premium liberado ✅")
+        # limpa param da URL visualmente
+        st.query_params.clear()
+    else:
+        st.error("Não conseguimos confirmar o pagamento. Tente novamente.")
+# --------------------------------
+
+
 # --- estado da calculadora CET ---
 if "show_cet" not in st.session_state:
     st.session_state.show_cet = False
@@ -187,5 +206,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
