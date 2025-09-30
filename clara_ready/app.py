@@ -181,9 +181,11 @@ def main():
     st.markdown("---")
     text = upload_or_paste_section()
     ctx = analysis_inputs()
+    st.button("🧮 Abrir calculadora de CET", on_click=_open_cet, use_container_width=True)
     if st.button("🚀 Começar análise", key="btn_run_analysis"):
         results_section(text, ctx)
 
 if __name__ == "__main__":
     main()
+
 
