@@ -13,6 +13,18 @@ APP_TITLE = "CLARA • Análise de Contratos"
 VERSION = "v11.0"
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
+# --- estado da calculadora CET ---
+if "show_cet" not in st.session_state:
+    st.session_state.show_cet = False
+
+def _open_cet():
+    st.session_state.show_cet = True
+
+def _close_cet():
+    st.session_state.show_cet = False
+# ---------------------------------
+
+
 ADMIN_EMAILS = set(st.secrets.get("admin_emails", os.getenv("ADMIN_EMAILS","").split(",")))
 STRIPE_PUBLIC_KEY = st.secrets.get("STRIPE_PUBLIC_KEY", os.getenv("STRIPE_PUBLIC_KEY",""))
 STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", os.getenv("STRIPE_SECRET_KEY",""))
@@ -174,3 +186,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
