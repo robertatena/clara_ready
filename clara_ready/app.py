@@ -13,6 +13,9 @@ APP_TITLE = "CLARA • Análise de Contratos"
 VERSION = "v11.0"
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
+st.write("🟢 Boot iniciou…")  # marcador de vida
+
+
 # --- tratar retorno do Stripe ---
 qs = st.query_params
 if qs.get("success") == "true" and qs.get("session_id"):
@@ -206,6 +209,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
