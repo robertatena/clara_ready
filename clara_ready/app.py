@@ -46,6 +46,39 @@ def show_checkout_cta():
         else:
             st.error("Não foi possível iniciar o checkout. Verifique STRIPE_PRICE_ID e chaves.")
 
+def landing_page():
+    st.markdown(
+        """
+        <div style="padding:12px 16px;border-radius:12px;background:#f8f9ff;border:1px solid #e6e8ff">
+          <h1 style="margin:0">CLARA • Análise de Contratos</h1>
+          <p style="margin:6px 0 0;color:#444">
+            Descubra <b>cláusulas abusivas</b>, <b>riscos ocultos</b> e <b>o que negociar</b> – em segundos.
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2 = st.columns([1.3, 1])
+    with col1:
+        st.markdown("### Por que usar a CLARA")
+        st.markdown("• Destaca multas e travas de rescisão")
+        st.markdown("• Resume riscos em linguagem simples")
+        st.markdown("• Sugere ações objetivas de negociação")
+        st.markdown("• Calculadora de CET para contratos financeiros")
+        st.markdown("• Área administrativa com lista de assinantes")
+
+        st.markdown("### Como funciona")
+        st.markdown("1) Faça upload do PDF **ou** cole o texto")
+        st.markdown("2) Selecione o contexto (setor, perfil, teto)")
+        st.markdown("3) Receba **trecho + explicação + ação**")
+
+    with col2:
+        st.markdown("### Plano Premium")
+        st.markdown("**R$ 29/mês** • análises ilimitadas • suporte prioritário")
+        show_checkout_cta()  # <-- CTA aparece aqui
+
+
 
 # --- BOOT protegido em cache (roda 1x por sessão; mostra erro em vez de travar) ---
 import os
@@ -301,6 +334,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
