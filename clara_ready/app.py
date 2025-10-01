@@ -16,6 +16,37 @@ st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 # --- marcador de vida (aparece na tela se o app chegou a renderizar) ---
 st.write("🟢 Boot iniciou…")
 
+from app_modules.stripe_utils import create_checkout_session  # garanta este import no topo
+
+def show_checkout_cta():
+    """
+    Mostra o botão de assinatura. Cria a sessão do Stripe e exibe o link seguro.
+    """
+    import os
+    email = (st.session_state.get("profile", {}) or {}).get("email", "").strip()
+    price_id = st.secrets.get("STRIPE_PRICE_ID", os.getenv("STRIPE_PRICE_ID", ""))
+    base_url = st.secrets.get("BASE_URL", "https://claraready.streamlit.app")
+
+    if not email:
+        st.info("Informe seu e-mail em **Seus dados** (barra lateral) para assinar.")
+        return
+    if not price_id:
+        st.error("Configuração ausente: STRIPE_PRICE_ID.")
+        return
+
+    if st.button("💳 Assinar Premium agora", type="primary", use_container_width=True):
+        sess = create_checkout_session(
+            price_id=price_id,
+            customer_email=email,
+            success_url=f"{base_url}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{base_url}?canceled=true",
+        )
+        if sess.get("url"):
+            st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
+        else:
+            st.error("Não foi possível iniciar o checkout. Verifique STRIPE_PRICE_ID e chaves.")
+
+
 # --- BOOT protegido em cache (roda 1x por sessão; mostra erro em vez de travar) ---
 import os
 from app_modules.storage import init_db  # ajuste se seu init_db estiver em outro módulo
@@ -270,6 +301,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
