@@ -44,8 +44,38 @@ except Exception as e:
 
 st.write("🟢 Serviços prontos.")
 # -----------------------------------------------------------------------
+# --- retorno do Stripe após pagamento (seguro) ---
+qs = st.query_params  # nova API do Streamlit
+if qs.get("success") == "true" and qs.get("session_id"):
+    try:
+        ok, data = verify_checkout_session(qs["session_id"])
+    except Exception as e:
+        st.error(f"Não deu para confirmar o pagamento agora. Detalhe: {e}")
+        ok, data = False, {}
 
+    if ok:
+        # marca Premium na sessão
+        st.session_state.premium = True
 
+        # registra assinante (opcional, mas útil p/ lista de inscritos)
+        try:
+            log_subscriber(
+                email=st.session_state.profile.get("email", ""),
+                name=st.session_state.profile.get("nome", ""),
+                stripe_customer_id=(data.get("customer")
+                                    or (data.get("subscription") or {}).get("customer")
+                                    or "")
+            )
+        except Exception:
+            pass
+
+        st.success("Pagamento confirmado! Premium liberado ✅")
+
+        # limpa a querystring (tira ?success=true&session_id=... da URL)
+        st.query_params.clear()
+    else:
+        st.warning("Não conseguimos confirmar essa sessão de pagamento. Tente novamente.")
+# -------------------------------------------------
 
 # --- tratar retorno do Stripe ---
 qs = st.query_params
@@ -240,6 +270,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
