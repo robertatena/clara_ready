@@ -271,15 +271,36 @@ def results_section(text: str, ctx: Dict[str, Any]):
 # =============== Página principal ============================================
 def main():
     sidebar_profile()
-    landing_page()
+   def landing_page():
+    st.markdown(
+        """
+        <div style="padding:18px 20px;border-radius:14px;background:#f7f9ff;
+                    border:1px solid #e6e8ff; margin-bottom:16px">
+          <h1 style="margin:0">CLARA • Análise de Contratos</h1>
+          <p style="margin:8px 0 0;color:#374151;font-size:15px">
+            Detecte <b>cláusulas abusivas</b>, <b>riscos ocultos</b> e <b>o que negociar</b> — em minutos, sem juridiquês.
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    st.markdown("---")
-    text = upload_or_paste_section()
-    ctx  = analysis_inputs()
+    col1, col2 = st.columns([1.4, 1])
+    with col1:
+        st.markdown("### Por que usar a CLARA")
+        st.markdown("• Sinaliza multas desproporcionais e travas de rescisão")
+        st.markdown("• Resume riscos em linguagem simples")
+        st.markdown("• Sugere **ações práticas** para negociar")
+        st.markdown("• Inclui **calculadora de CET** para contratos financeiros")
+        st.markdown("• Área **admin** com lista de assinantes")
 
-    if st.button("🚀 Começar análise", key="btn_run_analysis", use_container_width=True):
-        results_section(text, ctx)
+        with st.expander("Perguntas frequentes"):
+            st.markdown("**Posso testar?** Sim, 1 análise gratuita.")
+            st.markdown("**Posso cancelar?** Sim, a qualquer momento.")
+            st.markdown("**Quais arquivos?** PDF com texto ou colando o conteúdo.")
 
-if __name__ == "__main__":
-    main()
+    with col2:
+        st.markdown("### Plano Premium")
+        st.markdown("**R$ 9,90/mês** • análises ilimitadas • relatório completo • suporte prioritário")
+        show_checkout_cta()
 
