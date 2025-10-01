@@ -1,103 +1,175 @@
-# app.py  |  CLARA • Análise de Contratos
-# ------------------------------------------------------------
-# UX clean + Stripe checkout + análise + CET + Admin
-# ------------------------------------------------------------
+# app.py
+# CLARA • Análise de Contratos — v12.0
+# UX focado, checkout Stripe estável, calculadora CET persistente
 
-import os
-import io
-from typing import Dict, Any
-
+from __future__ import annotations
+import os, io
+from typing import Dict, Any, Tuple
 import streamlit as st
 
-# --- seus módulos (já existentes no projeto) ---
+# --- seus módulos (mantidos) ---
 from app_modules.pdf_utils import extract_text_from_pdf
-from app_modules.rules import RULES  # (mantido p/ compatibilidade futura)
-from app_modules.analysis import (
-    analyze_contract_text,
-    summarize_hits,
-    compute_cet_quick,
-)
-from app_modules.stripe_utils import (
-    init_stripe,
-    create_checkout_session,
-    verify_checkout_session,
-)
-from app_modules.storage import (
-    init_db,
-    log_analysis_event,
-    log_subscriber,
-    list_subscribers,
-    get_subscriber_by_email,
-)
+from app_modules.rules import RULES
+from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
+from app_modules.storage import init_db, log_analysis_event, log_subscriber, list_subscribers, get_subscriber_by_email
+from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
 
-
-# =============================================================================
-# Configuração/constantes
-# =============================================================================
-APP_TITLE = "CLARA • Análise de Contratos"
-VERSION = "v12.0"
+APP_TITLE  = "CLARA • Análise de Contratos"
+VERSION    = "v12.0"
+PRICE_COPY = "R$ 9,90/mês"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
-# =============================================================================
-# Boot seguro (Stripe + DB) com mensagens claras
-# =============================================================================
+# ======================================================================
+# 0) Utilidades
+# ======================================================================
+
+def _secret(name: str, default: str = "") -> str:
+    """Lê segredo do Streamlit Cloud (Settings > Secrets) ou variável de ambiente."""
+    return st.secrets.get(name, os.getenv(name, default))
+
+def _hero(text: str):
+    st.markdown(
+        f"""
+        <div style="padding:14px 18px;border-radius:14px;background:#f8faff;border:1px solid #e5ebff">
+          <h1 style="margin:0">{APP_TITLE}</h1>
+          <p style="margin:6px 0 0;color:#374151">{text}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ======================================================================
+# 1) Boot seguro (roda 1x por sessão)
+# ======================================================================
+
 @st.cache_resource(show_spinner="Iniciando serviços…")
-def _boot():
-    # 1) Stripe Secret
-    stripe_secret = st.secrets.get("STRIPE_SECRET_KEY", os.getenv("STRIPE_SECRET_KEY", ""))
-    if not stripe_secret:
-        raise RuntimeError(
-            "Faltando STRIPE_SECRET_KEY em Settings → Secrets (Streamlit Cloud)."
-        )
-    init_stripe(stripe_secret)
+def _boot() -> Tuple[bool, str]:
+    try:
+        # 1) Stripe
+        sk = _secret("STRIPE_SECRET_KEY")
+        if not sk:
+            return False, "Faltando STRIPE_SECRET_KEY em Settings → Secrets."
+        init_stripe(sk)
 
-    # 2) Database/Storage (setup leve)
-    init_db()
+        # 2) DB/Storage leve
+        init_db()
 
-    # 3) Admin emails
-    admins_raw = st.secrets.get("admin_emails", os.getenv("ADMIN_EMAILS", ""))
-    admin_set = set([e.strip() for e in admins_raw.split(",") if e.strip()])
-    return {
-        "admin_emails": admin_set,
-        "stripe_secret_present": True,
-    }
+        return True, ""
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
 
-
-try:
-    BOOT = _boot()
-    st.write("🟢 Boot iniciou…  🟢 Serviços prontos.")
-except Exception as e:
-    st.error(f"❌ Falha ao iniciar serviços: {e}")
+ok, err = _boot()
+st.write("🟢 Boot iniciou…" if ok else "🔴 Boot falhou")
+if not ok:
+    st.error(f"Não foi possível iniciar os serviços. Detalhe: {err}")
     st.stop()
 
+# ======================================================================
+# 2) Estado básico
+# ======================================================================
 
-# =============================================================================
-# Helpers de sessão
-# =============================================================================
-def _ensure_session_defaults():
-    if "profile" not in st.session_state:
-        st.session_state.profile = {"nome": "", "email": "", "papel": "Contratante"}
-    if "premium" not in st.session_state:
-        st.session_state.premium = False
-    if "free_runs_left" not in st.session_state:
-        # 1 análise gratuita para degustação
-        st.session_state.free_runs_left = 1
-    if "cet_result" not in st.session_state:
-        st.session_state.cet_result = None
+if "profile" not in st.session_state:
+    st.session_state.profile = {"nome":"", "email":"", "papel":"Contratante"}
 
+if "premium" not in st.session_state:
+    st.session_state.premium = False
 
-_ensure_session_defaults()
+if "free_runs_left" not in st.session_state:
+    st.session_state.free_runs_left = 1  # 1 análise grátis
 
+# estado da calculadora CET
+if "cet" not in st.session_state:
+    st.session_state.cet = {"P": 0.0, "i": 0.0, "n": 12, "fee": 0.0, "result": None}
 
-# =============================================================================
-# Stripe: tratar retorno do checkout via querystring
-# =============================================================================
+# ======================================================================
+# 3) Sidebar — “Seus dados”
+# ======================================================================
+
+def sidebar_profile():
+    st.sidebar.header("🔐 Seus dados (obrigatório)")
+    nome  = st.sidebar.text_input("Nome completo*", value=st.session_state.profile.get("nome",""), key="profile_nome")
+    email = st.sidebar.text_input("E-mail*",        value=st.session_state.profile.get("email",""), key="profile_email")
+    papel = st.sidebar.selectbox("Você é o contratante?*", ["Contratante","Contratado","Outro"], key="profile_papel")
+
+    if st.sidebar.button("Salvar perfil", use_container_width=True):
+        st.session_state.profile = {"nome": nome.strip(), "email": email.strip(), "papel": papel}
+        st.sidebar.success("Dados salvos!")
+        # Se já for assinante, libera premium no login
+        if email.strip():
+            if get_subscriber_by_email(email.strip()):
+                st.session_state.premium = True
+
+    # Administração (lista de assinantes) — apenas para e-mails admin
+    admin_emails = set(_secret("admin_emails", "").split(",")) if _secret("admin_emails") else set()
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Administração")
+    if st.session_state.profile.get("email") in admin_emails:
+        if st.sidebar.checkbox("Área administrativa"):
+            subs = list_subscribers()
+            st.sidebar.success("Admin ativo")
+            st.sidebar.write(subs)
+
+sidebar_profile()
+
+# ======================================================================
+# 4) Landing e CTA
+# ======================================================================
+
+def show_checkout_cta():
+    """Mostra o botão de assinatura. Cria a sessão do Stripe e exibe o link seguro."""
+    email    = st.session_state.profile.get("email","").strip()
+    price_id = _secret("STRIPE_PRICE_ID")
+    base_url = _secret("BASE_URL", "https://claraready.streamlit.app")
+
+    st.info(f"**{PRICE_COPY}** • análises ilimitadas • suporte prioritário")
+
+    if not email:
+        st.warning("Preencha seu **e-mail** na barra lateral para assinar.")
+        return
+    if not price_id:
+        st.error("Configuração ausente: STRIPE_PRICE_ID.")
+        return
+
+    if st.button("💳 Assinar Premium agora", type="primary", use_container_width=True):
+        session = create_checkout_session(
+            price_id=price_id,
+            customer_email=email,
+            success_url=f"{base_url}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{base_url}?canceled=true",
+        )
+        if session.get("url"):
+            st.link_button("👉 Abrir checkout seguro", session["url"], use_container_width=True)
+        else:
+            st.error("Não foi possível iniciar o checkout. Verifique STRIPE_PRICE_ID e chaves.")
+
+def landing():
+    _hero("Descubra **cláusulas abusivas**, **riscos ocultos** e **o que negociar** — em segundos.")
+    col1, col2 = st.columns([1.25, 1])
+    with col1:
+        st.markdown("### Por que usar a CLARA")
+        st.markdown("• Destaca multas desproporcionais, travas de rescisão e riscos de responsabilidade")
+        st.markdown("• Resume em linguagem simples e sugere **o que negociar**")
+        st.markdown("• Calculadora **CET** para contratos financeiros (juros e taxas)")
+        st.markdown("• Relatório para compartilhar com o time ou advogado(a)")
+
+        st.markdown("### Como funciona")
+        st.markdown("1) Envie o PDF **ou** cole o texto do contrato")
+        st.markdown("2) Selecione **setor**, **perfil** e **valor** (opcional)")
+        st.markdown("3) Receba **trechos + explicações + ação recomendada**")
+
+    with col2:
+        st.markdown("### Plano Premium")
+        show_checkout_cta()
+
+landing()
+
+# ======================================================================
+# 5) Tratar retorno do Stripe (URL ?success=true&session_id=...)
+# ======================================================================
+
 def handle_checkout_return():
-    qs = st.query_params
-    base_url = st.secrets.get("BASE_URL", os.getenv("BASE_URL", "")) or st.experimental_user.get("host", "")
-
-    # sucesso
+    qs = st.query_params  # nova API (substitui a deprecada experimental)
     if qs.get("success") == "true" and qs.get("session_id"):
         try:
             ok, data = verify_checkout_session(qs["session_id"])
@@ -106,212 +178,87 @@ def handle_checkout_return():
             ok, data = False, {}
 
         if ok:
-            # premium liberado
             st.session_state.premium = True
-
-            # registrar assinante (tolerante a falhas)
             try:
+                # registra assinante
                 log_subscriber(
-                    email=st.session_state.profile.get("email", ""),
-                    name=st.session_state.profile.get("nome", ""),
+                    email=st.session_state.profile.get("email",""),
+                    name=st.session_state.profile.get("nome",""),
                     stripe_customer_id=(data.get("customer")
-                                        or (data.get("subscription") or {}).get("customer")
-                                        or ""),
+                        or (data.get("subscription") or {}).get("customer")
+                        or "")
                 )
             except Exception:
                 pass
-
             st.success("Pagamento confirmado! Premium liberado ✅")
-            # limpar querystring
-            st.query_params.clear()
         else:
-            st.warning("Não conseguimos confirmar o pagamento. Tente novamente.")
-            st.query_params.clear()
-
-    # cancelamento
-    if qs.get("canceled") == "true":
-        st.info("Checkout cancelado. Você pode tentar novamente quando quiser.")
+            st.warning("Não conseguimos confirmar essa sessão de pagamento. Tente novamente.")
+        # limpa a querystring
         st.query_params.clear()
 
+handle_checkout_return()
 
-# =============================================================================
-# Sidebar: Perfil + Administração
-# =============================================================================
-def sidebar_profile_and_admin():
-    st.sidebar.header("🔐 Seus dados (obrigatório)")
+# ======================================================================
+# 6) Upload/colagem + contexto
+# ======================================================================
 
-    nome = st.sidebar.text_input("Nome completo*", value=st.session_state.profile.get("nome", ""))
-    email = st.sidebar.text_input("E-mail*", value=st.session_state.profile.get("email", ""))
-    papel = st.sidebar.selectbox(
-        "Você é o contratante?*",
-        ["Contratante", "Contratado", "Outro"],
-        index=["Contratante", "Contratado", "Outro"].index(st.session_state.profile.get("papel", "Contratante")),
-    )
-
-    if st.sidebar.button("Salvar perfil", use_container_width=True):
-        st.session_state.profile = {"nome": nome.strip(), "email": email.strip(), "papel": papel}
-        st.sidebar.success("Dados salvos!")
-
-        # se já é assinante no banco, liga premium
-        if email.strip():
-            existing = get_subscriber_by_email(email.strip())
-            if existing:
-                st.session_state.premium = True
-
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Administração")
-    if st.session_state.profile.get("email") in BOOT["admin_emails"]:
-        if st.sidebar.checkbox("Área administrativa"):
-            st.sidebar.success("Admin ativo")
-            with st.sidebar.expander("👥 Assinantes (lista)"):
-                try:
-                    subs = list_subscribers()
-                    st.sidebar.write(subs)
-                except Exception as e:
-                    st.sidebar.error(f"Não foi possível listar assinantes: {e}")
-
-
-# =============================================================================
-# Landing vendedora + CTA de assinatura
-# =============================================================================
-def premium_card():
-    st.markdown(
-        """
-        <div style="padding:18px;border:1px solid #e6e8ff;background:#f8f9ff;border-radius:14px">
-          <div style="font-weight:600;font-size:18px;margin-bottom:8px">
-            Plano Premium
-          </div>
-          <div style="color:#222;margin-bottom:8px">
-            <b>R$ 9,90/mês</b> • Análises ilimitadas • Relatório completo • Suporte prioritário
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    email = st.session_state.profile.get("email", "").strip()
-    price_id = st.secrets.get("STRIPE_PRICE_ID", os.getenv("STRIPE_PRICE_ID", ""))
-    base_url = st.secrets.get("BASE_URL", os.getenv("BASE_URL", "")) or "https://claraready.streamlit.app"
-
-    if st.session_state.premium:
-        st.success("Você já é Premium. Obrigado! 💙")
-        return
-
-    if st.button("💳 Assinar Premium agora", type="primary", use_container_width=True):
-        if not email:
-            st.warning("Informe seu e-mail em **Seus dados** (barra lateral) para assinar.")
-            return
-        if not price_id:
-            st.error("Configuração ausente: STRIPE_PRICE_ID.")
-            return
-
-        try:
-            sess = create_checkout_session(
-                price_id=price_id,
-                customer_email=email,
-                success_url=f"{base_url}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=f"{base_url}?canceled=true",
-            )
-        except Exception as e:
-            st.error(f"Erro ao iniciar checkout: {e}")
-            return
-
-        url = (sess or {}).get("url")
-        if url:
-            st.link_button("👉 Abrir checkout seguro", url, use_container_width=True)
-        else:
-            st.error("Não foi possível iniciar o checkout. Verifique STRIPE_PRICE_ID e chaves.")
-
-
-def landing():
-    st.markdown(
-        f"""
-        <div style="padding:18px 20px;border-radius:16px;background:#fbfbfe;border:1px solid #eef0ff">
-          <h1 style="margin:0">{APP_TITLE}</h1>
-          <div style="color:#444;margin-top:6px">
-            Clara lê seu contrato e destaca <b>cláusulas abusivas</b>, <b>riscos</b> e <b>o que negociar</b> — em minutos.
-          </div>
-          <div style="color:#666;margin-top:6px">Versão {VERSION}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    col1, col2 = st.columns([1.4, 1])
-    with col1:
-        st.markdown("### Por que usar a CLARA")
-        st.markdown("• Enxerga multas elevadas e travas de rescisão")
-        st.markdown("• Resume riscos em linguagem simples")
-        st.markdown("• Sugere ações objetivas de negociação")
-        st.markdown("• Calculadora de CET para contratos financeiros")
-        st.markdown("• Área admin com lista de assinantes")
-    with col2:
-        premium_card()
-
-
-# =============================================================================
-# Entrada de contrato + contexto
-# =============================================================================
-def upload_or_paste():
-    st.subheader("1) Envie o contrato")
-    file = st.file_uploader("PDF do contrato", type=["pdf"])
-    raw_text = ""
+def input_contract() -> str:
+    st.markdown("### 1) Envie o contrato")
+    file = st.file_uploader("PDF do contrato", type=["pdf"], key="u_pdf")
+    text = ""
     if file:
         with st.spinner("Lendo PDF…"):
-            raw_text = extract_text_from_pdf(file)
-
+            text = extract_text_from_pdf(file) or ""
     st.markdown("Ou cole o texto abaixo:")
-    raw_text = st.text_area("Texto do contrato", height=220, value=raw_text or "")
-    return raw_text
+    text = st.text_area("Texto do contrato", value=text, height=220, key="ta_text")
+    return text
 
+def input_context() -> Dict[str, Any]:
+    st.markdown("### 2) Contexto")
+    c1, c2, c3 = st.columns(3)
+    setor   = c1.selectbox("Setor", ["Genérico", "SaaS/Serviços", "Empréstimos", "Educação", "Plano de saúde"], key="ctx_setor")
+    perfil  = c2.selectbox("Perfil", ["Contratante", "Contratado", "Outro"], key="ctx_perfil")
+    limite  = c3.number_input("Valor máx. (opcional)", min_value=0.0, step=100.0, key="ctx_limite")
+    return {"setor": setor, "papel": perfil, "limite_valor": limite}
 
-def analysis_inputs() -> Dict[str, Any]:
-    st.subheader("2) Contexto")
-    col1, col2, col3 = st.columns(3)
-    setor = col1.selectbox("Setor", ["Genérico", "SaaS/Serviços", "Empréstimos", "Educação", "Plano de saúde"])
-    papel = col2.selectbox("Perfil", ["Contratante", "Contratado", "Outro"])
-    limite_valor = col3.number_input("Valor máx. (opcional)", min_value=0.0, step=100.0)
-    return {"setor": setor, "papel": papel, "limite_valor": limite_valor}
+# ======================================================================
+# 7) Calculadora CET (persistente, não some)
+# ======================================================================
 
+def cet_block():
+    st.markdown("### 3) Calculadora CET (opcional)")
+    with st.form("cet_form", clear_on_submit=False):
+        c1, c2, c3, c4 = st.columns(4)
+        st.session_state.cet["P"]   = c1.number_input("Principal (R$)", min_value=0.0, step=100.0, value=float(st.session_state.cet["P"]), key="cet_P")
+        st.session_state.cet["i"]   = c2.number_input("Juros mensais (%)", min_value=0.0, step=0.1,  value=float(st.session_state.cet["i"]), key="cet_i")
+        st.session_state.cet["n"]   = c3.number_input("Parcelas (n)",      min_value=1,   step=1,    value=int(st.session_state.cet["n"]), key="cet_n")
+        st.session_state.cet["fee"] = c4.number_input("Taxas fixas (R$)",  min_value=0.0, step=10.0, value=float(st.session_state.cet["fee"]), key="cet_fee")
 
-# =============================================================================
-# Calculadora de CET (com persistência)
-# =============================================================================
-def show_cet_calculator():
-    with st.expander("📈 Calcular CET (opcional)", expanded=False):
-        col1, col2, col3 = st.columns(3)
-        P = col1.number_input("Valor principal (R$)", min_value=0.0, step=100.0, key="cet_p")
-        j = col2.number_input("Juros mensais (%)", min_value=0.0, step=0.1, key="cet_i")  # %
-        n = col3.number_input("Parcelas (n)", min_value=1, step=1, key="cet_n")
-        fee = st.number_input("Taxas fixas (R$)", min_value=0.0, step=10.0, key="cet_fee")
+        submitted = st.form_submit_button("Calcular CET")
+        if submitted:
+            P   = float(st.session_state.cet["P"])
+            i_m = float(st.session_state.cet["i"]) / 100.0
+            n   = int(st.session_state.cet["n"])
+            fee = float(st.session_state.cet["fee"])
+            try:
+                result = compute_cet_quick(P, i_m, n, fee)
+            except Exception:
+                result = None
+            st.session_state.cet["result"] = result
 
-        if st.button("Calcular CET", key="btn_calc_cet"):
-            if P <= 0 or int(n) <= 0:
-                st.warning("Preencha um valor principal > 0 e número de parcelas ≥ 1.")
-            else:
-                try:
-                    cet = compute_cet_quick(P, float(j) / 100.0, int(n), float(fee))
-                    st.session_state.cet_result = float(cet)
-                except Exception as e:
-                    st.session_state.cet_result = None
-                    st.error(f"Não foi possível calcular o CET: {e}")
+    if st.session_state.cet["result"] is not None:
+        st.success(f"**CET aproximado:** {st.session_state.cet['result']*100:.2f}% a.m.")
 
-        if st.session_state.cet_result is not None:
-            st.success(f"**CET aproximado:** {st.session_state.cet_result * 100:.2f}% a.m.")
+# ======================================================================
+# 8) Resultado da análise
+# ======================================================================
 
-
-# =============================================================================
-# Execução da análise + relatório
-# =============================================================================
-def run_analysis(text: str, ctx: Dict[str, Any]):
-    st.subheader("3) Resultado")
+def results(text: str, ctx: Dict[str, Any]):
     if not text.strip():
-        st.warning("Envie o contrato (PDF) ou cole o texto para analisar.")
+        st.info("Envie o contrato (PDF) ou cole o texto para analisar.")
         return
-
-    # limita grátis
     if not st.session_state.premium and st.session_state.free_runs_left <= 0:
-        st.info("Você usou sua análise gratuita. Assine o Premium para seguir.")
+        st.warning("Você usou sua análise gratuita. Assine o Premium para continuar.")
         return
 
     with st.spinner("Analisando…"):
@@ -320,70 +267,68 @@ def run_analysis(text: str, ctx: Dict[str, Any]):
     if not st.session_state.premium:
         st.session_state.free_runs_left -= 1
 
-    # analytics
+    # log simples
     try:
         log_analysis_event(
-            email=st.session_state.profile.get("email", ""),
-            meta={"setor": ctx["setor"], "papel": ctx["papel"], "len": len(text)},
+            email=st.session_state.profile.get("email",""),
+            meta={"setor":ctx["setor"], "papel":ctx["papel"], "len":len(text)}
         )
     except Exception:
         pass
 
-    resume = summarize_hits(hits)
-    st.success(f"Resumo: {resume['resumo']}")
-    st.write(f"Gravidade: **{resume['gravidade']}** | Pontos críticos: **{resume['criticos']}** | Total: {len(hits)}")
+    # resumo + cartões
+    resumo = summarize_hits(hits)
+    st.success(f"**Resumo:** {resumo['resumo']}")
+    st.caption(f"Gravidade: **{resumo['gravidade']}** | Pontos críticos: **{resumo['criticos']}** | Total: {len(hits)}")
 
     for h in hits:
-        with st.expander(f"{h['severity']} • {h['title']}"):
+        with st.expander(f"{h['severity']} • {h['title']}", expanded=False):
             st.write(h["explanation"])
             if h.get("suggestion"):
                 st.markdown(f"**Sugestão:** {h['suggestion']}")
             if h.get("evidence"):
-                st.code(h["evidence"][:1200])
+                st.code(h["evidence"][:1500])
 
-    # calculadora independente
-    show_cet_calculator()
+    # relatório txt
+    if st.download_button(
+        "📥 Baixar relatório (txt)",
+        data=_build_report_txt(text, ctx, resumo, hits),
+        file_name="relatorio_clara.txt",
+        mime="text/plain",
+        use_container_width=True
+    ):
+        pass
 
-    # export txt simples (sem PII sensível)
-    if st.button("📥 Baixar relatório (txt)"):
-        buff = io.StringIO()
-        buff.write(f"{APP_TITLE} {VERSION}\n")
-        buff.write(f"Usuário: {st.session_state.profile.get('nome','')} <{st.session_state.profile.get('email','')}>\n")
-        buff.write(f"Setor: {ctx['setor']} | Perfil: {ctx['papel']}\n\n")
-        buff.write(f"Resumo: {resume['resumo']} (Gravidade: {resume['gravidade']})\n\nPontos de atenção:\n")
-        for h in hits:
-            buff.write(f"- [{h['severity']}] {h['title']} — {h['explanation']}\n")
-            if h.get("suggestion"):
-                buff.write(f"  Sugestão: {h['suggestion']}\n")
-        st.download_button("Download", buff.getvalue(), file_name="relatorio_clara.txt", mime="text/plain")
+def _build_report_txt(text: str, ctx: Dict[str, Any], resumo: Dict[str,Any], hits) -> str:
+    buff = io.StringIO()
+    buff.write(f"{APP_TITLE} {VERSION}\n")
+    buff.write(f"Usuário: {st.session_state.profile.get('nome')} <{st.session_state.profile.get('email')}>\n")
+    buff.write(f"Setor: {ctx['setor']} | Perfil: {ctx['papel']}\n\n")
+    buff.write(f"Resumo: {resumo['resumo']} (Gravidade: {resumo['gravidade']})\n\nPontos de atenção:\n")
+    for h in hits:
+        buff.write(f"- [{h['severity']}] {h['title']} — {h['explanation']}\n")
+        if h.get("suggestion"):
+            buff.write(f"  Sugestão: {h['suggestion']}\n")
+    return buff.getvalue()
+
+# ======================================================================
+# 9) Orquestração da página
+# ======================================================================
+
+st.markdown("---")
+contract_text = input_contract()
+context       = input_context()
+
+with st.expander("🧮 Calculadora de CET (opcional)", expanded=False):
+    cet_block()
+
+col_run, col_hint = st.columns([1,2])
+run_clicked = col_run.button("🚀 Começar análise", type="primary", use_container_width=True)
+col_hint.caption("Dica: contratos financeiros/educação podem se beneficiar de ver o CET antes da decisão.")
+
+if run_clicked:
+    results(contract_text, context)
+
+st.caption(f"{VERSION} • Feito com ❤️ para facilitar sua vida contratual.")
 
 
-# =============================================================================
-# Main
-# =============================================================================
-def main():
-    # 1) Tratar retorno do Stripe se houver (?success=?/canceled=)
-    handle_checkout_return()
-
-    # 2) Sidebar (perfil + admin)
-    sidebar_profile_and_admin()
-
-    # 3) Landing vendedora + CTA
-    landing()
-    st.markdown("---")
-
-    # 4) Fluxo principal
-    text = upload_or_paste()
-    ctx = analysis_inputs()
-
-    colA, colB = st.columns([1, 1])
-    with colA:
-        if st.button("🚀 Começar análise", use_container_width=True):
-            run_analysis(text, ctx)
-    with colB:
-        # Acesso rápido à calculadora a qualquer momento
-        show_cet_calculator()
-
-
-if __name__ == "__main__":
-    main()
