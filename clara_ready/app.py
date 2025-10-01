@@ -1,21 +1,23 @@
 # app.py
-# CLARA • Análise de Contratos — v12.0
-# UX focado, checkout Stripe estável, calculadora CET persistente
+# CLARA • Análise de Contratos — v12.1
+# UX limpo, checkout Stripe estável, calculadora CET persistente e fix do admin_emails
 
 from __future__ import annotations
 import os, io
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, List, Tuple
 import streamlit as st
 
-# --- seus módulos (mantidos) ---
+# --- seus módulos (mantidos no repo) ---
 from app_modules.pdf_utils import extract_text_from_pdf
-from app_modules.rules import RULES
+from app_modules.rules import RULES  # (usado nos módulos de análise)
 from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
-from app_modules.storage import init_db, log_analysis_event, log_subscriber, list_subscribers, get_subscriber_by_email
+from app_modules.storage import (
+    init_db, log_analysis_event, log_subscriber, list_subscribers, get_subscriber_by_email
+)
 from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
 
 APP_TITLE  = "CLARA • Análise de Contratos"
-VERSION    = "v12.0"
+VERSION    = "v12.1"
 PRICE_COPY = "R$ 9,90/mês"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
@@ -24,20 +26,50 @@ st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 # 0) Utilidades
 # ======================================================================
 
-def _secret(name: str, default: str = "") -> str:
+def _secret(name: str, default: str = "") -> str | Any:
     """Lê segredo do Streamlit Cloud (Settings > Secrets) ou variável de ambiente."""
     return st.secrets.get(name, os.getenv(name, default))
+
+def _secret_to_emails(value: Any) -> List[str]:
+    """
+    Converte admin_emails em lista independente do formato:
+    - "a@x.com, b@y.com"
+    - ["a@x.com", "b@y.com"]
+    - None
+    """
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(x).strip() for x in value if str(x).strip()]
+    if isinstance(value, str):
+        return [x.strip() for x in value.split(",") if x.strip()]
+    # qualquer outro tipo: ignora
+    return []
 
 def _hero(text: str):
     st.markdown(
         f"""
-        <div style="padding:14px 18px;border-radius:14px;background:#f8faff;border:1px solid #e5ebff">
+        <div style="padding:16px 18px;border-radius:14px;background:#f8faff;border:1px solid #e5ebff">
           <h1 style="margin:0">{APP_TITLE}</h1>
-          <p style="margin:6px 0 0;color:#374151">{text}</p>
+          <p style="margin:10px 0 0;color:#374151;font-size:16px">{text}</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+def _read_query() -> Dict[str, str]:
+    """Compat para pegar query params em versões diferentes do Streamlit."""
+    try:
+        qp = dict(st.query_params)  # 1.33+
+        # st.query_params devolve valores já 'str'
+        return {k: v for k, v in qp.items()}
+    except Exception:
+        # fallback
+        try:
+            q = st.experimental_get_query_params()
+            return {k: v[0] if isinstance(v, list) and v else str(v) for k, v in q.items()}
+        except Exception:
+            return {}
 
 # ======================================================================
 # 1) Boot seguro (roda 1x por sessão)
@@ -46,13 +78,13 @@ def _hero(text: str):
 @st.cache_resource(show_spinner="Iniciando serviços…")
 def _boot() -> Tuple[bool, str]:
     try:
-        # 1) Stripe
+        # Stripe
         sk = _secret("STRIPE_SECRET_KEY")
         if not sk:
             return False, "Faltando STRIPE_SECRET_KEY em Settings → Secrets."
         init_stripe(sk)
 
-        # 2) DB/Storage leve
+        # DB/Storage
         init_db()
 
         return True, ""
@@ -76,9 +108,9 @@ if "premium" not in st.session_state:
     st.session_state.premium = False
 
 if "free_runs_left" not in st.session_state:
-    st.session_state.free_runs_left = 1  # 1 análise grátis
+    st.session_state.free_runs_left = 1  # 1 análise grátis por visitante
 
-# estado da calculadora CET
+# CET persistente
 if "cet" not in st.session_state:
     st.session_state.cet = {"P": 0.0, "i": 0.0, "n": 12, "fee": 0.0, "result": None}
 
@@ -100,8 +132,10 @@ def sidebar_profile():
             if get_subscriber_by_email(email.strip()):
                 st.session_state.premium = True
 
-    # Administração (lista de assinantes) — apenas para e-mails admin
-    admin_emails = set(_secret("admin_emails", "").split(",")) if _secret("admin_emails") else set()
+    # Administração (lista de assinantes) — e-mails admin vindos como string OU lista
+    admins_raw = _secret("admin_emails", None)
+    admin_emails = set(_secret_to_emails(admins_raw))
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("Administração")
     if st.session_state.profile.get("email") in admin_emails:
@@ -113,7 +147,7 @@ def sidebar_profile():
 sidebar_profile()
 
 # ======================================================================
-# 4) Landing e CTA
+# 4) Landing e CTA (Stripe)
 # ======================================================================
 
 def show_checkout_cta():
@@ -131,13 +165,18 @@ def show_checkout_cta():
         st.error("Configuração ausente: STRIPE_PRICE_ID.")
         return
 
-    if st.button("💳 Assinar Premium agora", type="primary", use_container_width=True):
-        session = create_checkout_session(
-            price_id=price_id,
-            customer_email=email,
-            success_url=f"{base_url}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{base_url}?canceled=true",
-        )
+    if st.button("💳 Assinar Premium agora", type="primary", use_container_width=True, key="btn_subscribe"):
+        try:
+            session = create_checkout_session(
+                price_id=price_id,
+                customer_email=email,
+                success_url=f"{base_url}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{base_url}?canceled=true",
+            )
+        except Exception as e:
+            st.error(f"Erro ao criar sessão de pagamento: {e}")
+            return
+
         if session.get("url"):
             st.link_button("👉 Abrir checkout seguro", session["url"], use_container_width=True)
         else:
@@ -156,7 +195,7 @@ def landing():
         st.markdown("### Como funciona")
         st.markdown("1) Envie o PDF **ou** cole o texto do contrato")
         st.markdown("2) Selecione **setor**, **perfil** e **valor** (opcional)")
-        st.markdown("3) Receba **trechos + explicações + ação recomendada**")
+        st.markmarkdown("3) Receba **trechos + explicações + ação recomendada**")
 
     with col2:
         st.markdown("### Plano Premium")
@@ -169,7 +208,7 @@ landing()
 # ======================================================================
 
 def handle_checkout_return():
-    qs = st.query_params  # nova API (substitui a deprecada experimental)
+    qs = _read_query()
     if qs.get("success") == "true" and qs.get("session_id"):
         try:
             ok, data = verify_checkout_session(qs["session_id"])
@@ -193,8 +232,11 @@ def handle_checkout_return():
             st.success("Pagamento confirmado! Premium liberado ✅")
         else:
             st.warning("Não conseguimos confirmar essa sessão de pagamento. Tente novamente.")
-        # limpa a querystring
-        st.query_params.clear()
+        # limpa a querystring (sem recarregar a página)
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
 
 handle_checkout_return()
 
@@ -254,6 +296,7 @@ def cet_block():
 # ======================================================================
 
 def results(text: str, ctx: Dict[str, Any]):
+    st.markdown("### 4) Resultado")
     if not text.strip():
         st.info("Envie o contrato (PDF) ou cole o texto para analisar.")
         return
@@ -324,11 +367,13 @@ with st.expander("🧮 Calculadora de CET (opcional)", expanded=False):
 
 col_run, col_hint = st.columns([1,2])
 run_clicked = col_run.button("🚀 Começar análise", type="primary", use_container_width=True)
-col_hint.caption("Dica: contratos financeiros/educação podem se beneficiar de ver o CET antes da decisão.")
+col_hint.caption("Dica: para contratos financeiros/educação, ver o CET ajuda na decisão.")
 
 if run_clicked:
     results(contract_text, context)
 
-st.caption(f"{VERSION} • Feito com ❤️ para facilitar sua vida contratual.")
+st.caption(f"{VERSION} • Feito com ❤️ para facilitar sua vida contratual. Não substitui um advogado")
+
+
 
 
