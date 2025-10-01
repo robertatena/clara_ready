@@ -335,4 +335,7 @@ def main():
         st.markdown("**R$ 9,90/mês** • análises ilimitadas • relatório completo • suporte prioritário")
         show_checkout_cta()
 
+ show_cet_calculator()
+
+
 
