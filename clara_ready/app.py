@@ -144,8 +144,11 @@ def show_checkout_cta():
         )
         if sess.get("url"):
             st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
-        else:
-            st.error("Não foi possível iniciar o checkout. Verifique STRIPE_PRICE_ID e chaves.")
+      # dentro de show_checkout_cta(), troque o else:
+else:
+    st.error("Não foi possível iniciar o checkout. Verifique STRIPE_PRICE_ID e chaves.")
+    # debug seguro:
+    st.caption("Dica: confirme se o STRIPE_PRICE_ID começa com price_ e é do mesmo ambiente das chaves (test/live).")
 
 def landing_page():
     st.markdown(
@@ -279,3 +282,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
