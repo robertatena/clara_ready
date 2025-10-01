@@ -8,12 +8,43 @@ from app_modules.analysis import analyze_contract_text, summarize_hits, compute_
 from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
 from app_modules.storage import init_db, log_analysis_event, log_subscriber, list_subscribers, get_subscriber_by_email
 
-
 APP_TITLE = "CLARA • Análise de Contratos"
 VERSION = "v11.0"
+
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
-st.write("🟢 Boot iniciou…")  # marcador de vida
+# --- marcador de vida (aparece na tela se o app chegou a renderizar) ---
+st.write("🟢 Boot iniciou…")
+
+# --- BOOT protegido em cache (roda 1x por sessão; mostra erro em vez de travar) ---
+import os
+from app_modules.storage import init_db  # ajuste se seu init_db estiver em outro módulo
+from app_modules.stripe_utils import init_stripe
+
+@st.cache_resource(show_spinner="Iniciando serviços…")
+def _boot():
+    # 1) Secrets
+    stripe_secret = st.secrets.get("STRIPE_SECRET_KEY", os.getenv("STRIPE_SECRET_KEY", ""))
+    if not stripe_secret:
+        raise RuntimeError("Faltando STRIPE_SECRET_KEY em Settings → Secrets (Streamlit Cloud).")
+
+    # 2) Stripe (só define api_key; sem chamadas de rede aqui)
+    init_stripe(stripe_secret)
+
+    # 3) DB/Storage (apenas setup leve)
+    init_db()
+
+    return True
+
+try:
+    _ = _boot()
+except Exception as e:
+    st.error(f"❌ Falha ao iniciar: {e}")
+    st.stop()
+
+st.write("🟢 Serviços prontos.")
+# -----------------------------------------------------------------------
+
 
 
 # --- tratar retorno do Stripe ---
@@ -209,6 +240,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
