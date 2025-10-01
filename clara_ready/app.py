@@ -266,6 +266,37 @@ def results_section(text: str, ctx: Dict[str, Any]):
                 buff.write(f"  Sugestão: {h['suggestion']}\n")
         st.download_button("Download", buff.getvalue(), file_name="relatorio_clara.txt", mime="text/plain")
 # ==============================================================================
+# -----------------------------------------------------------
+# Calculadora de CET (independente da análise do contrato)
+# -----------------------------------------------------------
+def show_cet_calculator():
+    import streamlit as st
+    # guarda resultado entre re-renderizações
+    if "cet_result" not in st.session_state:
+        st.session_state.cet_result = None
+
+    with st.expander("📈 Calcular CET (opcional)", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        P   = col1.number_input("Valor principal (R$)", min_value=0.0, step=100.0, key="cet_p")
+        j   = col2.number_input("Juros mensais (%)",   min_value=0.0, step=0.1,  key="cet_i")  # %
+        n   = col3.number_input("Parcelas (n)",        min_value=1,   step=1,    key="cet_n")
+        fee = st.number_input("Taxas fixas (R$)",      min_value=0.0, step=10.0, key="cet_fee")
+
+        if st.button("Calcular CET", key="btn_calc_cet"):
+            if P <= 0 or int(n) <= 0:
+                st.warning("Preencha um valor principal > 0 e número de parcelas ≥ 1.")
+            else:
+                try:
+                    # compute_cet_quick já está importado do app_modules.analysis
+                    cet = compute_cet_quick(P, float(j)/100.0, int(n), float(fee))
+                    st.session_state.cet_result = float(cet)
+                except Exception as e:
+                    st.session_state.cet_result = None
+                    st.error(f"Não foi possível calcular o CET: {e}")
+
+        # mostra o último resultado se existir
+        if st.session_state.cet_result is not None:
+            st.success(f"**CET aproximado:** {st.session_state.cet_result*100:.2f}% a.m.")
 
 
 # =============== Página principal ============================================
@@ -303,4 +334,5 @@ def main():
         st.markdown("### Plano Premium")
         st.markdown("**R$ 9,90/mês** • análises ilimitadas • relatório completo • suporte prioritário")
         show_checkout_cta()
+
 
