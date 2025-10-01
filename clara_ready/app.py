@@ -217,20 +217,19 @@ def pricing_card():
         st.info("Informe e salve seu e-mail na barra lateral para assinar.")
         return
 
-    if st.button("💳 Assinar Premium agora", use_container_width=True):
-        try:
-            sess = create_checkout_session(
-                price_id=STRIPE_PRICE_ID,
-                customer_email=email,
-                success_url=f"{BASE_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=f"{BASE_URL}?canceled=true",
-            )
-            if sess.get("url"):
-                st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
-            else:
-                st.error("Stripe indisponível no momento. Tente de novo em instantes.")
-        except Exception as e:
-            st.error(f"Erro ao criar sessão de checkout: {e}")
+  if st.button("💳 Assinar Premium agora", use_container_width=True):
+    sess = create_checkout_session(
+        price_id=STRIPE_PRICE_ID,
+        customer_email=email,
+        success_url=f"{BASE_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{BASE_URL}?canceled=true",
+    )
+    if sess.get("url"):
+        st.success("Sessão criada! Clique abaixo para abrir o checkout seguro.")
+        st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
+    else:
+        # Agora aparece o motivo real (ex.: “No such price”, “live key com price de teste”, etc.)
+        st.error(sess.get("error", "Stripe indisponível no momento. Tente novamente."))
 
 # ----------------- guardas -----------------
 def guard_before_analyze() -> bool:
@@ -359,3 +358,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
