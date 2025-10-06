@@ -214,6 +214,24 @@ def sidebar_profile():
                 with st.sidebar.expander("👥 Assinantes (Stripe)", expanded=False):
                     st.write(subs if subs else "Nenhum assinante localizado ainda.")
             except Exception as e:
+                        # --- LOG DE VISITAS ---
+        try:
+            visits = read_visits()  # retorna List[Dict]
+            with st.sidebar.expander("👣 Últimas visitas", expanded=False):
+                if not visits:
+                    st.write("Sem registros ainda.")
+                else:
+                    # Mostra só as últimas 50 para não poluir
+                    ultimas = visits[-50:]
+                    # Exibe em forma de tabela simples (sem pandas)
+                    for v in reversed(ultimas):
+                        st.write(
+                            f"• {v.get('ts','')} — {v.get('email','(sem e-mail)')} "
+                            f"({v.get('nome','')}) — {v.get('ip','')}"
+                        )
+        except Exception as e:
+            st.sidebar.error(f"Não foi possível ler visitas: {e}")
+
                 st.sidebar.error(f"Não foi possível listar assinantes: {e}")
 
 # -------------------------------------------------
@@ -442,5 +460,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
