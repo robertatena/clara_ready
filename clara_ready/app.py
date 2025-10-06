@@ -23,6 +23,29 @@ from app_modules.storage import (
     list_subscribers,
     get_subscriber_by_email,
 )
+from datetime import datetime
+from pathlib import Path
+
+VISITS_CSV = Path("/tmp/visits.csv")
+
+def log_visit(email: str):
+    if not email:
+        return
+    VISITS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with VISITS_CSV.open("a", encoding="utf-8") as f:
+        f.write(f"{datetime.utcnow().isoformat()},{email}\n")
+
+def read_visits():
+    if not VISITS_CSV.exists():
+        return []
+    rows = []
+    with VISITS_CSV.open("r", encoding="utf-8") as f:
+        for line in f:
+            ts, em = line.strip().split(",", 1)
+            rows.append({"quando (UTC)": ts, "email": em})
+    # mais recentes primeiro
+    return rows[::-1]
+
 
 # -------------------------------------------------
 # Config & Constantes
@@ -415,3 +438,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
