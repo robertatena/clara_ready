@@ -195,8 +195,28 @@ def sidebar_profile():
     if st.sidebar.button("Salvar perfil"):
         st.session_state.profile = {"nome": nome.strip(), "email": email.strip(), "cel": cel.strip(), "papel": papel}
          # >>> ADICIONE ESTAS LINHAS <<<
-    log_visit(email.strip())            # registra a visita no /tmp/visits.csv
+   if st.sidebar.button("Salvar perfil"):
+    st.session_state.profile = {
+        "nome": nome.strip(),
+        "email": email.strip(),
+        "cel": cel.strip(),
+        "papel": papel,
+    }
+
+    # registra visita (não trava se der erro)
+    try:
+        log_visit(email.strip())  # registra a visita no /tmp/visits.csv
+    except Exception:
+        pass
     st.session_state.visit_logged = True
+
+    st.sidebar.success("Dados salvos!")
+
+    # Se já é assinante, sobe premium
+    if current_email():
+        if get_subscriber_by_email(current_email()):
+            st.session_state.premium = True
+
     # >>> FIM DO BLOCO ADICIONADO <<<
         st.sidebar.success("Dados salvos!")
         # Sobe premium se já estiver assinado
@@ -460,6 +480,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
