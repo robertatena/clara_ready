@@ -194,6 +194,10 @@ def sidebar_profile():
                                  index=["Contratante","Contratado","Outro"].index(st.session_state.profile.get("papel", "Contratante")))
     if st.sidebar.button("Salvar perfil"):
         st.session_state.profile = {"nome": nome.strip(), "email": email.strip(), "cel": cel.strip(), "papel": papel}
+         # >>> ADICIONE ESTAS LINHAS <<<
+    log_visit(email.strip())            # registra a visita no /tmp/visits.csv
+    st.session_state.visit_logged = True
+    # >>> FIM DO BLOCO ADICIONADO <<<
         st.sidebar.success("Dados salvos!")
         # Sobe premium se já estiver assinado
         if current_email():
@@ -438,4 +442,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
