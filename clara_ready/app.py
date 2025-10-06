@@ -4,9 +4,11 @@
 
 import os
 import io
-from typing import Dict, Any, Tuple, Set
+from typing import Dict, Any, Tuple, Set, List
 
 import streamlit as st
+from datetime import datetime
+from pathlib import Path
 
 # ---- Módulos locais (mantenha sua estrutura) ----
 from app_modules.pdf_utils import extract_text_from_pdf
@@ -23,35 +25,12 @@ from app_modules.storage import (
     list_subscribers,
     get_subscriber_by_email,
 )
-from datetime import datetime
-from pathlib import Path
-
-VISITS_CSV = Path("/tmp/visits.csv")
-
-def log_visit(email: str):
-    if not email:
-        return
-    VISITS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    with VISITS_CSV.open("a", encoding="utf-8") as f:
-        f.write(f"{datetime.utcnow().isoformat()},{email}\n")
-
-def read_visits():
-    if not VISITS_CSV.exists():
-        return []
-    rows = []
-    with VISITS_CSV.open("r", encoding="utf-8") as f:
-        for line in f:
-            ts, em = line.strip().split(",", 1)
-            rows.append({"quando (UTC)": ts, "email": em})
-    # mais recentes primeiro
-    return rows[::-1]
-
 
 # -------------------------------------------------
 # Config & Constantes
 # -------------------------------------------------
 APP_TITLE = "CLARA • Análise de Contratos"
-VERSION = "v12.1"
+VERSION = "v12.2"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
@@ -63,7 +42,33 @@ BASE_URL          = st.secrets.get("BASE_URL",          os.getenv("BASE_URL", "h
 
 MONTHLY_PRICE_TEXT = "R$ 9,90/mês"
 
+# -------------------------------------------------
+# Registro simples de visitas (em /tmp/visits.csv)
+# -------------------------------------------------
+VISITS_CSV = Path("/tmp/visits.csv")
 
+def log_visit(email: str) -> None:
+    if not (email or "").strip():
+        return
+    VISITS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with VISITS_CSV.open("a", encoding="utf-8") as f:
+        f.write(f"{datetime.utcnow().isoformat()},{email.strip().lower()}\n")
+
+def read_visits() -> List[Dict[str, str]]:
+    if not VISITS_CSV.exists():
+        return []
+    rows: List[Dict[str, str]] = []
+    with VISITS_CSV.open("r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split(",", 1)
+            if len(parts) == 2:
+                ts, em = parts
+                rows.append({"ts": ts, "email": em})
+    return rows  # ordem cronológica (mais antigo -> mais novo)
+
+# -------------------------------------------------
+# Helpers/estado
+# -------------------------------------------------
 def _parse_admin_emails() -> Set[str]:
     """
     admin_emails pode vir como:
@@ -77,20 +82,15 @@ def _parse_admin_emails() -> Set[str]:
         raw = os.getenv("ADMIN_EMAILS", "")
 
     emails: Set[str] = set()
-
     if isinstance(raw, list):
         emails = {str(x).strip().lower() for x in raw if str(x).strip()}
     elif isinstance(raw, str):
         emails = {e.strip().lower() for e in raw.split(",") if e.strip()}
-
     return emails
-
 
 ADMIN_EMAILS = _parse_admin_emails()
 
-# -------------------------------------------------
 # CSS (estética)
-# -------------------------------------------------
 st.markdown(
     """
     <style>
@@ -110,21 +110,15 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# -------------------------------------------------
 # Estado inicial
-# -------------------------------------------------
 if "profile" not in st.session_state:
     st.session_state.profile = {"nome": "", "email": "", "cel": "", "papel": "Contratante"}
-
 if "premium" not in st.session_state:
     st.session_state.premium = False
-
 if "free_runs_left" not in st.session_state:
     st.session_state.free_runs_left = 1  # 1 análise gratuita por e-mail
 
-# -------------------------------------------------
 # Boot único (Stripe + DB) com mensagens úteis
-# -------------------------------------------------
 @st.cache_resource(show_spinner="Iniciando serviços…")
 def _boot() -> Tuple[bool, str]:
     try:
@@ -190,73 +184,96 @@ def sidebar_profile():
     nome  = st.sidebar.text_input("Nome completo*", value=st.session_state.profile.get("nome", ""))
     email = st.sidebar.text_input("E-mail*",        value=st.session_state.profile.get("email", ""))
     cel   = st.sidebar.text_input("Celular*",       value=st.session_state.profile.get("cel", ""))
-    papel = st.sidebar.selectbox("Você é o contratante?*", ["Contratante", "Contratado", "Outro"],
-                                 index=["Contratante","Contratado","Outro"].index(st.session_state.profile.get("papel", "Contratante")))
-    if st.sidebar.button("Salvar perfil"):
-        st.session_state.profile = {"nome": nome.strip(), "email": email.strip(), "cel": cel.strip(), "papel": papel}
-         # >>> ADICIONE ESTAS LINHAS <<<
-   if st.sidebar.button("Salvar perfil"):
-    st.session_state.profile = {
-        "nome": nome.strip(),
-        "email": email.strip(),
-        "cel": cel.strip(),
-        "papel": papel,
-    }
+    papel = st.sidebar.selectbox(
+        "Você é o contratante?*",
+        ["Contratante", "Contratado", "Outro"],
+        index=["Contratante", "Contratado", "Outro"].index(st.session_state.profile.get("papel", "Contratante")),
+    )
 
-    # registra visita (não trava se der erro)
-    try:
-        log_visit(email.strip())  # registra a visita no /tmp/visits.csv
-    except Exception:
-        pass
-    st.session_state.visit_logged = True
+    if st.sidebar.button("Salvar perfil", use_container_width=True):
+        # salva perfil
+        st.session_state.profile = {
+            "nome": nome.strip(),
+            "email": email.strip(),
+            "cel": cel.strip(),
+            "papel": papel,
+        }
+        # registra visita (não trava se der erro)
+        try:
+            log_visit(email.strip())
+        except Exception:
+            pass
+        st.session_state.visit_logged = True
 
-    st.sidebar.success("Dados salvos!")
-
-    # Se já é assinante, sobe premium
-    if current_email():
-        if get_subscriber_by_email(current_email()):
-            st.session_state.premium = True
-
-    # >>> FIM DO BLOCO ADICIONADO <<<
-        st.sidebar.success("Dados salvos!")
-        # Sobe premium se já estiver assinado
-        if current_email():
-            if get_subscriber_by_email(current_email()):
+        # sobe premium se já for assinante
+        try:
+            if current_email() and get_subscriber_by_email(current_email()):
                 st.session_state.premium = True
+        except Exception:
+            pass
+
+        st.sidebar.success("Dados salvos!")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Administração")
     if current_email() in ADMIN_EMAILS:
         if st.sidebar.checkbox("Área administrativa"):
             st.sidebar.success("Admin ativo")
+            # Assinantes (Stripe)
             try:
                 subs = list_subscribers()
                 with st.sidebar.expander("👥 Assinantes (Stripe)", expanded=False):
                     st.write(subs if subs else "Nenhum assinante localizado ainda.")
             except Exception as e:
-                        # --- LOG DE VISITAS ---
-        try:
-            visits = read_visits()  # retorna List[Dict]
-            with st.sidebar.expander("👣 Últimas visitas", expanded=False):
-                if not visits:
-                    st.write("Sem registros ainda.")
-                else:
-                    # Mostra só as últimas 50 para não poluir
-                    ultimas = visits[-50:]
-                    # Exibe em forma de tabela simples (sem pandas)
-                    for v in reversed(ultimas):
-                        st.write(
-                            f"• {v.get('ts','')} — {v.get('email','(sem e-mail)')} "
-                            f"({v.get('nome','')}) — {v.get('ip','')}"
-                        )
-        except Exception as e:
-            st.sidebar.error(f"Não foi possível ler visitas: {e}")
-
                 st.sidebar.error(f"Não foi possível listar assinantes: {e}")
 
+            # Últimas visitas
+            try:
+                visits = read_visits()
+                with st.sidebar.expander("👣 Últimas visitas", expanded=False):
+                    if not visits:
+                        st.write("Sem registros ainda.")
+                    else:
+                        # mostra as 50 mais recentes
+                        ultimas = visits[-50:]
+                        for v in reversed(ultimas):
+                            st.write(f"{v.get('ts','')} — {v.get('email','(sem e-mail)')}")
+            except Exception as e:
+                st.sidebar.error(f"Não foi possível ler visitas: {e}")
+
 # -------------------------------------------------
-# Hero + Benefícios + Passo-a-passo + FAQ CET + Aviso legal
+# Hero + Benefícios + Passo-a-passo + FAQ CET + Aviso legal + Preço
 # -------------------------------------------------
+def pricing_card():
+    st.markdown("### Plano Premium")
+    st.caption(f"{MONTHLY_PRICE_TEXT} • análises ilimitadas • suporte prioritário")
+
+    okS, msgS = stripe_diagnostics()
+    email = current_email()
+
+    if not email:
+        st.info("Informe e salve seu **nome, e-mail e celular** na barra lateral para assinar.")
+        return
+
+    if st.button("💳 Assinar Premium agora", use_container_width=True):
+        if not okS:
+            st.error(msgS)
+            return
+        try:
+            sess = create_checkout_session(
+                price_id=STRIPE_PRICE_ID,
+                customer_email=email,
+                success_url=f"{BASE_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{BASE_URL}?canceled=true",
+            )
+            if sess.get("url"):
+                st.success("Sessão criada! Clique abaixo para abrir o checkout seguro.")
+                st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
+            else:
+                st.error(sess.get("error", "Stripe indisponível no momento. Tente novamente."))
+        except Exception as e:
+            st.error(f"Stripe indisponível no momento. Detalhe: {e}")
+
 def landing_block():
     with st.container():
         st.markdown(
@@ -295,39 +312,6 @@ def landing_block():
 
         with c2:
             pricing_card()
-
-# -------------------------------------------------
-# Stripe • Pricing e CTA
-# -------------------------------------------------
-def pricing_card():
-    st.markdown("### Plano Premium")
-    st.caption(f"{MONTHLY_PRICE_TEXT} • análises ilimitadas • suporte prioritário")
-
-    okS, msgS = stripe_diagnostics()
-    email = current_email()
-
-    if not email:
-        st.info("Informe e salve seu **nome, e-mail e celular** na barra lateral para assinar.")
-        return
-
-    if st.button("💳 Assinar Premium agora", use_container_width=True):
-        if not okS:
-            st.error(msgS)
-            return
-        try:
-            sess = create_checkout_session(
-                price_id=STRIPE_PRICE_ID,
-                customer_email=email,
-                success_url=f"{BASE_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=f"{BASE_URL}?canceled=true",
-            )
-            if sess.get("url"):
-                st.success("Sessão criada! Clique abaixo para abrir o checkout seguro.")
-                st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
-            else:
-                st.error(sess.get("error", "Stripe indisponível no momento. Tente novamente."))
-        except Exception as e:
-            st.error(f"Stripe indisponível no momento. Detalhe: {e}")
 
 # -------------------------------------------------
 # Tratamento do retorno do Stripe (seguro)
@@ -399,7 +383,6 @@ def cet_calculator_block():
 
 def results_section(text: str, ctx: Dict[str, Any]):
     st.subheader("4) Resultado")
-    email = current_email()
 
     if not require_profile():
         st.info("Preencha e salve **nome, e-mail e celular** na barra lateral para liberar a análise.")
@@ -422,6 +405,7 @@ def results_section(text: str, ctx: Dict[str, Any]):
         st.session_state.free_runs_left -= 1
 
     # log de uso (útil p/ admin)
+    email = current_email()
     log_analysis_event(email=email, meta={"setor": ctx["setor"], "papel": ctx["papel"], "len": len(text)})
 
     resume = summarize_hits(hits)
@@ -438,7 +422,7 @@ def results_section(text: str, ctx: Dict[str, Any]):
 
     cet_calculator_block()
 
-    # Relatório (corrigido)
+    # Relatório
     buff = io.StringIO()
     buff.write(f"{APP_TITLE} {VERSION}\n")
     buff.write(f"Usuário: {st.session_state.profile.get('nome')} <{email}>  •  Papel: {ctx['papel']}\n")
@@ -480,6 +464,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
