@@ -1,138 +1,125 @@
 # app.py
 # CLARA • Análise de Contratos
-# UX caprichado + Stripe robusto + cadastro mínimo + admin seguro + Hotjar + Logs completos
+# UX caprichado • Stripe robusto • Admin com logs & export (CSV/XLSX) • Hotjar opcional
+
+from __future__ import annotations
 
 import os
 import io
 from typing import Dict, Any, Tuple, Set, List
-
-import streamlit as st
-import streamlit.components.v1 as components
 from datetime import datetime
 from pathlib import Path
 
-# ---- Módulos locais (mantenha sua estrutura) ----
+import streamlit as st
+
+# --- módulos locais (mantenha seus arquivos como estão) ---
 from app_modules.pdf_utils import extract_text_from_pdf
 from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
-from app_modules.stripe_utils import (
-    init_stripe,
-    create_checkout_session,
-    verify_checkout_session,
-)
+from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
 from app_modules.storage import (
-    init_db,
-    log_analysis_event,
-    log_subscriber,
-    list_subscribers,
-    get_subscriber_by_email,
+    init_db, log_analysis_event, log_subscriber, list_subscribers, get_subscriber_by_email
 )
 
-# -------------------------------------------------
-# Config & Constantes
-# -------------------------------------------------
+# =============================================================================
+# Configurações & Constantes
+# =============================================================================
 APP_TITLE = "CLARA • Análise de Contratos"
-VERSION = "v12.3"
+VERSION   = "v13.0"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
-# Segredos/ENV
 STRIPE_PUBLIC_KEY = st.secrets.get("STRIPE_PUBLIC_KEY", os.getenv("STRIPE_PUBLIC_KEY", ""))
 STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", os.getenv("STRIPE_SECRET_KEY", ""))
 STRIPE_PRICE_ID   = st.secrets.get("STRIPE_PRICE_ID",   os.getenv("STRIPE_PRICE_ID", ""))
 BASE_URL          = st.secrets.get("BASE_URL",          os.getenv("BASE_URL", "https://claraready.streamlit.app"))
-
-# Hotjar
-HOTJAR_ID = st.secrets.get("HOTJAR_ID", os.getenv("HOTJAR_ID", ""))
-HOTJAR_SV = st.secrets.get("HOTJAR_SV", os.getenv("HOTJAR_SV", "6"))
+HOTJAR_ID         = st.secrets.get("HOTJAR_ID",         os.getenv("HOTJAR_ID", ""))  # opcional
 
 MONTHLY_PRICE_TEXT = "R$ 9,90/mês"
 
-# -------------------------------------------------
-# Registro simples de visitas / consultas (CSV em /tmp)
-# -------------------------------------------------
-VISITS_CSV = Path("/tmp/visits.csv")
-CONSULTS_CSV = Path("/tmp/consultas.csv")
+# Arquivos de log (em container ephemeral do Streamlit Cloud)
+VISITS_CSV    = Path("/tmp/visits.csv")
+CONSULTS_CSV  = Path("/tmp/consultas.csv")
 
-def _safe_write_line(p: Path, line: str) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as f:
-        f.write(line + "\n")
+# =============================================================================
+# Helpers de Log
+# =============================================================================
+def _ts() -> str:
+    """Timestamp ISO8601 (UTC)."""
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 def log_visit(email: str) -> None:
-    """Salva timestamp UTC + e-mail (minúsculo) em /tmp/visits.csv."""
-    if not (email or "").strip():
+    """Registra visita (e-mail + quando) em /tmp/visits.csv."""
+    email = (email or "").strip().lower()
+    if not email:
         return
-    ts = datetime.utcnow().isoformat()
-    _safe_write_line(VISITS_CSV, f"{ts},{email.strip().lower()}")
+    VISITS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    header_needed = not VISITS_CSV.exists()
+    with VISITS_CSV.open("a", encoding="utf-8") as f:
+        if header_needed:
+            f.write("ts,email\n")
+        f.write(f"{_ts()},{email}\n")
 
 def read_visits() -> List[Dict[str, str]]:
     if not VISITS_CSV.exists():
         return []
     rows: List[Dict[str, str]] = []
     with VISITS_CSV.open("r", encoding="utf-8") as f:
+        next(f, None)  # header
         for line in f:
-            parts = line.strip().split(",", 1)
-            if len(parts) == 2:
-                ts, em = parts
-                rows.append({"ts": ts, "email": em})
+            ts, email = line.strip().split(",", 1)
+            rows.append({"ts": ts, "email": email})
     return rows
 
-def log_consultation(profile: Dict[str, str], ctx: Dict[str, Any], text_len: int, is_premium_flag: bool, resumo_curto: str) -> None:
-    """
-    Salva uma linha com:
-    ts, nome, email, cel, setor, papel, limite_valor, text_len, premium, resumo
-    """
-    ts = datetime.utcnow().isoformat()
-    nome = (profile.get("nome") or "").replace(",", " ")
-    email = (profile.get("email") or "").strip().lower()
-    cel = (profile.get("cel") or "").replace(",", " ")
-    setor = (ctx.get("setor") or "").replace(",", " ")
-    papel = (ctx.get("papel") or "").replace(",", " ")
-    limite = str(ctx.get("limite_valor") or 0)
-    premium = "sim" if is_premium_flag else "nao"
-    resumo = (resumo_curto or "").replace("\n", " ").replace(",", " ")[:180]
-    _safe_write_line(CONSULTS_CSV, ",".join([ts, nome, email, cel, setor, papel, limite, str(text_len), premium, resumo]))
+def log_consult(
+    *,
+    nome: str,
+    email: str,
+    cel: str,
+    papel: str,
+    setor: str,
+    valor_max: float | int | str,
+    text_len: int,
+    premium: bool,
+    resumo: str
+) -> None:
+    """Registra uma análise em /tmp/consultas.csv (para admin & export)."""
+    CONSULTS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    header_needed = not CONSULTS_CSV.exists()
+    safe_resumo = (resumo or "").replace("\n", " ").replace("\r", " ")
+    with CONSULTS_CSV.open("a", encoding="utf-8") as f:
+        if header_needed:
+            f.write(
+                "ts,nome,email,cel,papel,setor,valor_max,text_len,premium,resumo\n"
+            )
+        f.write(
+            f"{_ts()},{nome.strip()},{email.strip().lower()},{cel.strip()},{papel},"
+            f"{setor},{valor_max},{text_len},{int(bool(premium))},{safe_resumo}\n"
+        )
 
-def read_consultations(limit: int = 100) -> List[Dict[str, str]]:
+def read_consults() -> List[Dict[str, str]]:
     if not CONSULTS_CSV.exists():
         return []
     rows: List[Dict[str, str]] = []
     with CONSULTS_CSV.open("r", encoding="utf-8") as f:
+        next(f, None)  # header
         for line in f:
-            parts = line.rstrip("\n").split(",")
-            # ts, nome, email, cel, setor, papel, limite, text_len, premium, resumo
-            if len(parts) >= 10:
+            parts = line.rstrip("\n").split(",", 9)
+            if len(parts) == 10:
+                ts, nome, email, cel, papel, setor, valor_max, text_len, premium, resumo = parts
                 rows.append({
-                    "ts": parts[0],
-                    "nome": parts[1],
-                    "email": parts[2],
-                    "cel": parts[3],
-                    "setor": parts[4],
-                    "papel": parts[5],
-                    "valor_max": parts[6],
-                    "texto_len": parts[7],
-                    "premium": parts[8],
-                    "resumo": ",".join(parts[9:])  # caso tenha vírgulas na cauda
+                    "ts": ts, "nome": nome, "email": email, "cel": cel, "papel": papel,
+                    "setor": setor, "valor_max": valor_max, "text_len": text_len,
+                    "premium": premium, "resumo": resumo
                 })
-    # mais recentes primeiro e corta no limite
-    rows = rows[::-1][:limit]
     return rows
 
-# -------------------------------------------------
-# Helpers/estado
-# -------------------------------------------------
+# =============================================================================
+# Admin e autenticação "leve"
+# =============================================================================
 def _parse_admin_emails() -> Set[str]:
-    """
-    admin_emails pode vir como:
-     - string: "a@b.com,c@d.com"
-     - lista: ["a@b.com", "c@d.com"]
-     - vazio/ausente
-    Normalizamos em set lowercased.
-    """
     raw = st.secrets.get("admin_emails", None)
     if raw is None:
         raw = os.getenv("ADMIN_EMAILS", "")
-
     emails: Set[str] = set()
     if isinstance(raw, list):
         emails = {str(x).strip().lower() for x in raw if str(x).strip()}
@@ -142,14 +129,16 @@ def _parse_admin_emails() -> Set[str]:
 
 ADMIN_EMAILS = _parse_admin_emails()
 
-# CSS (estética)
+# =============================================================================
+# CSS + Hotjar
+# =============================================================================
 st.markdown(
     """
     <style>
       .hero {
         padding: 18px 22px; border-radius: 14px;
         background: linear-gradient(180deg, #f7f8ff 0%, #ffffff 100%);
-        border: 1px solid #eceffd; margin-bottom: 14px;
+        border: 1px solid #eceffd; margin-bottom: 16px;
       }
       .pill {
         display:inline-block; padding:4px 10px; border-radius:999px;
@@ -162,7 +151,33 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+def inject_hotjar():
+    """Injeta o Hotjar se HOTJAR_ID estiver configurado."""
+    if not HOTJAR_ID:
+        return
+    import streamlit.components.v1 as components
+    components.html(
+        f"""
+        <!-- Hotjar -->
+        <script>
+          (function(h,o,t,j,a,r){{
+              h.hj=h.hj||function(){{(h.hj.q=h.hj.q||[]).push(arguments)}};
+              h._hjSettings={{hjid:{HOTJAR_ID},hjsv:6}};
+              a=o.getElementsByTagName('head')[0];
+              r=o.createElement('script');r.async=1;
+              r.src='https://static.hotjar.com/c/hotjar-'+h._hjSettings.hjid+'.js?sv='+h._hjSettings.hjsv;
+              a.appendChild(r);
+          }})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');
+        </script>
+        """,
+        height=0,
+    )
+
+inject_hotjar()
+
+# =============================================================================
 # Estado inicial
+# =============================================================================
 if "profile" not in st.session_state:
     st.session_state.profile = {"nome": "", "email": "", "cel": "", "papel": "Contratante"}
 if "premium" not in st.session_state:
@@ -170,7 +185,9 @@ if "premium" not in st.session_state:
 if "free_runs_left" not in st.session_state:
     st.session_state.free_runs_left = 1  # 1 análise gratuita por e-mail
 
-# Boot único (Stripe + DB) com mensagens úteis
+# =============================================================================
+# Boot (Stripe + DB) com mensagens úteis
+# =============================================================================
 @st.cache_resource(show_spinner="Iniciando serviços…")
 def _boot() -> Tuple[bool, str]:
     try:
@@ -188,38 +205,13 @@ if not ok_boot:
     st.error(boot_msg)
     st.stop()
 
-# -------------------------------------------------
-# Hotjar
-# -------------------------------------------------
-def inject_hotjar():
-    if not HOTJAR_ID:
-        return
-    components.html(
-        f"""
-        <!-- Hotjar Tracking Code -->
-        <script>
-          (function(h,o,t,j,a,r){{
-              h.hj=h.hj||function(){{(h.hj.q=h.hj.q||[]).push(arguments)}};
-              h._hjSettings={{hjid:{HOTJAR_ID},hjsv:{HOTJAR_SV}}};
-              a=o.getElementsByTagName('head')[0];
-              r=o.createElement('script');r.async=1;
-              r.src=t+h._hjSettings.hjid+j+h._hjSettings.hjsv;
-              a.appendChild(r);
-          }})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');
-        </script>
-        """,
-        height=0,
-        scrolling=False,
-    )
-
-# -------------------------------------------------
+# =============================================================================
 # Utilidades
-# -------------------------------------------------
+# =============================================================================
 def current_email() -> str:
     return (st.session_state.profile.get("email") or "").strip().lower()
 
 def is_premium() -> bool:
-    """Retorna se o usuário é premium, com cache em sessão."""
     if st.session_state.premium:
         return True
     email = current_email()
@@ -239,7 +231,6 @@ def require_profile() -> bool:
     return bool((p.get("nome") or "").strip() and (p.get("email") or "").strip() and (p.get("cel") or "").strip())
 
 def stripe_diagnostics() -> Tuple[bool, str]:
-    """Diagnóstico rápido de configuração Stripe."""
     miss = []
     if not STRIPE_PUBLIC_KEY: miss.append("STRIPE_PUBLIC_KEY")
     if not STRIPE_SECRET_KEY: miss.append("STRIPE_SECRET_KEY")
@@ -247,14 +238,14 @@ def stripe_diagnostics() -> Tuple[bool, str]:
     if miss:
         return False, f"Configure os segredos ausentes: {', '.join(miss)}."
     if STRIPE_PRICE_ID.startswith("prod_"):
-        return False, "Use um **price_...** (não **prod_...**). No Stripe crie um Preço e copie o ID **price_...**"
+        return False, "Use um **price_...** (não **prod_...**). Crie um Preço e copie o ID **price_...**"
     if not STRIPE_PRICE_ID.startswith("price_"):
-        return False, "O STRIPE_PRICE_ID parece inválido. Deve começar com **price_...**"
+        return False, "O STRIPE_PRICE_ID parece inválido (deve começar com **price_...**)."
     return True, ""
 
-# -------------------------------------------------
-# Sidebar • Cadastro mínimo + Admin
-# -------------------------------------------------
+# =============================================================================
+# Sidebar: cadastro + admin
+# =============================================================================
 def sidebar_profile():
     st.sidebar.header("🔐 Seus dados (obrigatório)")
     nome  = st.sidebar.text_input("Nome completo*", value=st.session_state.profile.get("nome", ""))
@@ -263,78 +254,92 @@ def sidebar_profile():
     papel = st.sidebar.selectbox(
         "Você é o contratante?*",
         ["Contratante", "Contratado", "Outro"],
-        index=["Contratante", "Contratado", "Outro"].index(st.session_state.profile.get("papel", "Contratante")),
+        index=["Contratante","Contratado","Outro"].index(st.session_state.profile.get("papel", "Contratante"))
     )
 
     if st.sidebar.button("Salvar perfil", use_container_width=True):
-        # salva perfil
-        st.session_state.profile = {
-            "nome": nome.strip(),
-            "email": email.strip(),
-            "cel": cel.strip(),
-            "papel": papel,
-        }
-        # registra visita (não trava se der erro)
+        st.session_state.profile = {"nome": nome.strip(), "email": email.strip(), "cel": cel.strip(), "papel": papel}
         try:
             log_visit(email.strip())
         except Exception:
             pass
-        st.session_state.visit_logged = True
-
         # sobe premium se já for assinante
         try:
             if current_email() and get_subscriber_by_email(current_email()):
                 st.session_state.premium = True
         except Exception:
             pass
-
         st.sidebar.success("Dados salvos!")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Administração")
-    if current_email() in ADMIN_EMAILS:
-        if st.sidebar.checkbox("Área administrativa"):
-            st.sidebar.success("Admin ativo")
-            # Assinantes (Stripe)
-            try:
-                subs = list_subscribers()
-                with st.sidebar.expander("👥 Assinantes (Stripe)", expanded=False):
-                    st.write(subs if subs else "Nenhum assinante localizado ainda.")
-            except Exception as e:
-                st.sidebar.error(f"Não foi possível listar assinantes: {e}")
+    if current_email() in ADMIN_EMAILS and st.sidebar.checkbox("Área administrativa"):
+        st.sidebar.success("Admin ativo")
 
-            # Últimas visitas
-            try:
-                visits = read_visits()
-                with st.sidebar.expander("👣 Últimas visitas", expanded=False):
-                    if not visits:
-                        st.write("Sem registros ainda.")
-                    else:
-                        ultimas = visits[-100:]
-                        for v in reversed(ultimas):
-                            st.write(f"{v.get('ts','')} — {v.get('email','(sem e-mail)')}")
-            except Exception as e:
-                st.sidebar.error(f"Não foi possível ler visitas: {e}")
+        # Assinantes (Stripe)
+        try:
+            subs = list_subscribers()
+            with st.sidebar.expander("👥 Assinantes (Stripe)", expanded=False):
+                st.write(subs if subs else "Nenhum assinante localizado ainda.")
+        except Exception as e:
+            st.sidebar.error(f"Não foi possível listar assinantes: {e}")
 
-            # Consultas (análises)
-            try:
-                consults = read_consultations(limit=200)
-                with st.sidebar.expander("📄 Últimas consultas (logs)", expanded=False):
-                    if not consults:
-                        st.write("Nenhuma consulta registrada ainda.")
-                    else:
-                        for c in consults:
-                            st.write(
-                                f"• {c['ts']} — {c['nome']} <{c['email']}> — {c['cel']} — "
-                                f"{c['setor']} / {c['papel']} — R$ {c['valor_max']} — "
-                                f"texto: {c['texto_len']} — premium: {c['premium']} — {c['resumo']}"
-                            )
-            except Exception as e:
-                st.sidebar.error(f"Não foi possível ler consultas: {e}")
+        # Últimas visitas
+        try:
+            visits = read_visits()
+            with st.sidebar.expander("👣 Últimas visitas", expanded=False):
+                if not visits:
+                    st.write("Sem registros ainda.")
+                else:
+                    for v in visits[-50:][::-1]:  # 50 mais recentes
+                        st.write(f"{v['ts']} — {v['email']}")
+        except Exception as e:
+            st.sidebar.error(f"Não foi possível ler visitas: {e}")
 
-# -------------------------------------------------
-# Hero + Benefícios + Passo-a-passo + FAQ CET + Aviso legal + Preço
-# -------------------------------------------------
+        # Últimas consultas + export
+        try:
+            consults = read_consults()
+            with st.sidebar.expander("📄 Últimas consultas (logs)", expanded=True):
+                if not consults:
+                    st.write("Sem registros de consultas ainda.")
+                else:
+                    for c in consults[-100:][::-1]:  # 100 mais recentes
+                        st.write(
+                            f"{c['ts']} — {c['nome']} <{c['email']}> • {c['papel']} • "
+                            f"{c['setor']} • R$ {c['valor_max']} • texto={c['text_len']} • "
+                            f"premium={c['premium']} • {c['resumo']}"
+                        )
+
+                # downloads (CSV e, se possível, XLSX)
+                if CONSULTS_CSV.exists():
+                    st.download_button(
+                        "⬇️ Baixar consultas (CSV)",
+                        data=CONSULTS_CSV.read_bytes(),
+                        file_name="consultas.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+                    try:
+                        import pandas as pd
+                        df = pd.read_csv(CONSULTS_CSV)
+                        buf = io.BytesIO()
+                        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                            df.to_excel(writer, index=False, sheet_name="consultas")
+                        st.download_button(
+                            "⬇️ Baixar consultas (Excel)",
+                            data=buf.getvalue(),
+                            file_name="consultas.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                        )
+                    except Exception:
+                        pass
+        except Exception as e:
+            st.sidebar.error(f"Não foi possível ler consultas: {e}")
+
+# =============================================================================
+# Landing: benefícios + preço + aviso legal
+# =============================================================================
 def pricing_card():
     st.markdown("### Plano Premium")
     st.caption(f"{MONTHLY_PRICE_TEXT} • análises ilimitadas • suporte prioritário")
@@ -348,8 +353,7 @@ def pricing_card():
 
     if st.button("💳 Assinar Premium agora", use_container_width=True):
         if not okS:
-            st.error(msgS)
-            return
+            st.error(msgS); return
         try:
             sess = create_checkout_session(
                 price_id=STRIPE_PRICE_ID,
@@ -379,34 +383,31 @@ def landing_block():
             """,
             unsafe_allow_html=True,
         )
-
-        c1, c2 = st.columns([1.2, 1])
+        c1, c2 = st.columns([1.25, 1])
         with c1:
             st.markdown("### Por que usar a CLARA")
-            st.markdown("• Destaca multas fora da realidade; travas de rescisão e responsabilidades exageradas")
+            st.markdown("• Destaca multas fora da realidade, travas de rescisão e responsabilidades exageradas")
             st.markdown("• Resume em linguagem simples e sugere **o que negociar**")
             st.markdown("• Calculadora de **CET – Custo Efetivo Total** (juros + tarifas + taxas)")
             st.markdown("• Relatório para compartilhar com seu time ou advogado(a)")
             with st.expander("O que é CET (Custo Efetivo Total)?"):
                 st.write(
-                    "O **CET** é a taxa que representa **todo o custo** de um financiamento ou parcelamento "
+                    "O **CET** é a taxa que representa **todo o custo** de um financiamento/parcelamento "
                     "(juros + tarifas + seguros + outras cobranças). Ajuda a comparar propostas e enxergar "
                     "o custo real além do “só juros”."
                 )
-
             st.markdown("### Como funciona")
-            st.markdown("1. Envie o PDF ou cole o texto do contrato")
-            st.markdown("2. Selecione **setor**, **perfil** e (opcional) valor")
-            st.markdown("3. Receba **trecho + explicação + ação de negociação**")
-            st.markdown("4. (Opcional) Calcule o **CET**")
+            st.markdown("1) Envie o PDF **ou** cole o texto do contrato")
+            st.markdown("2) Selecione **setor**, **perfil** e (opcional) valor")
+            st.markdown("3) Receba **trecho + explicação + ação de negociação**")
+            st.markdown("4) (Opcional) Calcule o **CET**")
             st.info("**Aviso legal**: A CLARA **não substitui um(a) advogado(a)**. Use para triagem e preparo da negociação.")
-
         with c2:
             pricing_card()
 
-# -------------------------------------------------
-# Tratamento do retorno do Stripe (seguro)
-# -------------------------------------------------
+# =============================================================================
+# Stripe: retorno seguro
+# =============================================================================
 def handle_checkout_result():
     qs = st.query_params  # Streamlit 1.37+
     if qs.get("success") == "true" and qs.get("session_id"):
@@ -424,8 +425,8 @@ def handle_checkout_result():
                     email=email,
                     name=st.session_state.profile.get("nome", ""),
                     stripe_customer_id=(payload.get("customer")
-                                       or (payload.get("subscription") or {}).get("customer")
-                                       or ""),
+                                        or (payload.get("subscription") or {}).get("customer")
+                                        or ""),
                 )
             except Exception:
                 pass
@@ -433,15 +434,14 @@ def handle_checkout_result():
             st.success("Pagamento confirmado! Premium liberado ✅")
         else:
             st.warning("Não conseguimos confirmar essa sessão de pagamento. Tente novamente.")
-        # Limpa a querystring
         try:
             st.query_params.clear()
         except Exception:
             pass
 
-# -------------------------------------------------
-# Upload & Inputs & CET & Resultados
-# -------------------------------------------------
+# =============================================================================
+# Entrada (upload/texto) + Inputs + CET + Resultado
+# =============================================================================
 def upload_or_paste_section() -> str:
     st.subheader("1) Envie o contrato")
     file = st.file_uploader("PDF do contrato", type=["pdf"])
@@ -458,8 +458,8 @@ def analysis_inputs() -> Dict[str, Any]:
     col1, col2, col3 = st.columns(3)
     setor = col1.selectbox("Setor", ["Genérico", "SaaS/Serviços", "Empréstimos", "Educação", "Plano de saúde"])
     papel = col2.selectbox("Perfil", ["Contratante", "Contratado", "Outro"])
-    limite_valor = col3.number_input("Valor máx. (opcional)", min_value=0.0, step=100.0)
-    return {"setor": setor, "papel": papel, "limite_valor": limite_valor}
+    valor_max = col3.number_input("Valor máx. (opcional)", min_value=0.0, step=100.0)
+    return {"setor": setor, "papel": papel, "limite_valor": valor_max}
 
 def cet_calculator_block():
     with st.expander("📈 Calculadora de CET (opcional)", expanded=False):
@@ -478,24 +478,22 @@ def results_section(text: str, ctx: Dict[str, Any]):
     if not require_profile():
         st.info("Preencha e salve **nome, e-mail e celular** na barra lateral para liberar a análise.")
         return
-
     if not text.strip():
         st.warning("Envie o contrato (PDF) ou cole o texto para analisar.")
         return
 
-    # Free/Premium
-    if not is_premium():
-        if st.session_state.free_runs_left <= 0:
-            st.info("Você usou sua análise gratuita. **Assine o Premium** para continuar.")
-            return
+    # Free / Premium
+    if not is_premium() and st.session_state.free_runs_left <= 0:
+        st.info("Você usou sua análise gratuita. **Assine o Premium** para continuar.")
+        return
 
     with st.spinner("Analisando…"):
-        hits, meta = analyze_contract_text(text, ctx)
+        hits, _meta = analyze_contract_text(text, ctx)
 
     if not is_premium():
         st.session_state.free_runs_left -= 1
 
-    # log de uso (útil p/ admin) + log de consultas enriquecido
+    # Log de uso (telemetria leve)
     email = current_email()
     log_analysis_event(email=email, meta={"setor": ctx["setor"], "papel": ctx["papel"], "len": len(text)})
 
@@ -503,14 +501,18 @@ def results_section(text: str, ctx: Dict[str, Any]):
     st.success(f"Resumo: {resume['resumo']}")
     st.write(f"Gravidade: **{resume['gravidade']}** | Pontos críticos: **{resume['criticos']}** | Total identificados: {len(hits)}")
 
-    # salva consulta detalhada
+    # salva consulta detalhada (para admin/export)
     try:
-        log_consultation(
-            profile=st.session_state.profile,
-            ctx=ctx,
+        log_consult(
+            nome=st.session_state.profile.get("nome",""),
+            email=email,
+            cel=st.session_state.profile.get("cel",""),
+            papel=ctx["papel"],
+            setor=ctx["setor"],
+            valor_max=ctx["limite_valor"],
             text_len=len(text),
-            is_premium_flag=is_premium(),
-            resumo_curto=resume.get("resumo", ""),
+            premium=is_premium(),
+            resumo=resume.get("resumo","")
         )
     except Exception:
         pass
@@ -525,7 +527,7 @@ def results_section(text: str, ctx: Dict[str, Any]):
 
     cet_calculator_block()
 
-    # Relatório
+    # Relatório (download .txt)
     buff = io.StringIO()
     buff.write(f"{APP_TITLE} {VERSION}\n")
     buff.write(f"Usuário: {st.session_state.profile.get('nome')} <{email}>  •  Papel: {ctx['papel']}\n")
@@ -536,14 +538,18 @@ def results_section(text: str, ctx: Dict[str, Any]):
         buff.write(f"- [{h['severity']}] {h['title']} — {h['explanation']}\n")
         if h.get("suggestion"):
             buff.write(f"  Sugestão: {h['suggestion']}\n")
-    st.download_button("📥 Baixar relatório (txt)", data=buff.getvalue(),
-                       file_name="relatorio_clara.txt", mime="text/plain")
+    st.download_button(
+        "📥 Baixar relatório (txt)",
+        data=buff.getvalue(),
+        file_name="relatorio_clara.txt",
+        mime="text/plain",
+        use_container_width=True,
+    )
 
-# -------------------------------------------------
+# =============================================================================
 # Orquestração
-# -------------------------------------------------
+# =============================================================================
 def main():
-    inject_hotjar()  # Hotjar em toda página
     sidebar_profile()
     handle_checkout_result()
     landing_block()
