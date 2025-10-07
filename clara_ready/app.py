@@ -1,16 +1,18 @@
 # app.py
 # CLARA • Análise de Contratos
-# UX caprichado • Stripe robusto • Admin com logs & export (CSV/XLSX) • Hotjar opcional
+# UX caprichado • Stripe robusto • Admin com logs & export (CSV/XLSX) • Hotjar • Linguagem simples
 
 from __future__ import annotations
 
 import os
 import io
+import re
 from typing import Dict, Any, Tuple, Set, List
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 # --- módulos locais (mantenha seus arquivos como estão) ---
 from app_modules.pdf_utils import extract_text_from_pdf
@@ -24,7 +26,7 @@ from app_modules.storage import (
 # Configurações & Constantes
 # =============================================================================
 APP_TITLE = "CLARA • Análise de Contratos"
-VERSION   = "v13.0"
+VERSION   = "v14.0"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
@@ -155,7 +157,6 @@ def inject_hotjar():
     """Injeta o Hotjar se HOTJAR_ID estiver configurado."""
     if not HOTJAR_ID:
         return
-    import streamlit.components.v1 as components
     components.html(
         f"""
         <!-- Hotjar -->
@@ -184,6 +185,8 @@ if "premium" not in st.session_state:
     st.session_state.premium = False
 if "free_runs_left" not in st.session_state:
     st.session_state.free_runs_left = 1  # 1 análise gratuita por e-mail
+if "lang_level" not in st.session_state:
+    st.session_state.lang_level = "Simples (recomendado)"  # seletor de linguagem
 
 # =============================================================================
 # Boot (Stripe + DB) com mensagens úteis
@@ -204,6 +207,40 @@ st.write("🟢 Boot iniciou…")
 if not ok_boot:
     st.error(boot_msg)
     st.stop()
+
+# =============================================================================
+# Linguagem simples (anti-juridiquês)
+# =============================================================================
+PLAIN_TERMS = {
+    r"\bLGPD\b": "Lei de Proteção de Dados (regras de uso dos seus dados)",
+    r"\bforo\b": "cidade/tribunal onde disputas vão ser julgadas",
+    r"\bônus\b": "responsabilidade",
+    r"\bmora\b": "atraso no pagamento",
+    r"\bcess(a|ã)o de direitos\b": "transferência de direitos para outra parte",
+    r"\brescis(ã|a)o\b": "encerrar o contrato",
+    r"\bconfidencialidade\b": "dever de guardar segredo",
+    r"\bindeniza(ç|c)ão\b": "pagar prejuízos",
+    r"\bpenalidades?\b": "multas ou punições do contrato",
+    r"\bforo de eleição\b": "local combinado para resolver brigas na justiça",
+    r"\bencargos\b": "custos extras",
+    r"\bônus da prova\b": "quem precisa provar na justiça",
+}
+
+def simplify_text_pt(text: str) -> str:
+    """Troca juridiquês por explicações simples, mantendo sentido."""
+    s = text or ""
+    s = re.sub(r';\s*', '. ', s)
+    for pat, repl in PLAIN_TERMS.items():
+        s = re.sub(pat, repl, s, flags=re.IGNORECASE)
+    s = re.sub(r"\b(in casu|destarte|outrossim|ex vi|ipso facto)\b", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    return s
+
+def one_line_summary(h: dict) -> str:
+    title = (h.get("title") or "").strip()
+    sev   = (h.get("severity") or "").strip()
+    exp   = simplify_text_pt(h.get("explanation", ""))[:120]
+    return f"[{sev}] {title}: {exp}..."
 
 # =============================================================================
 # Utilidades
@@ -459,6 +496,12 @@ def analysis_inputs() -> Dict[str, Any]:
     setor = col1.selectbox("Setor", ["Genérico", "SaaS/Serviços", "Empréstimos", "Educação", "Plano de saúde"])
     papel = col2.selectbox("Perfil", ["Contratante", "Contratado", "Outro"])
     valor_max = col3.number_input("Valor máx. (opcional)", min_value=0.0, step=100.0)
+    # seletor de linguagem (anti-juridiquês)
+    st.session_state.lang_level = st.radio(
+        "Nível de linguagem",
+        ["Simples (recomendado)", "Técnico"],
+        index=0, horizontal=True
+    )
     return {"setor": setor, "papel": papel, "limite_valor": valor_max}
 
 def cet_calculator_block():
@@ -497,11 +540,12 @@ def results_section(text: str, ctx: Dict[str, Any]):
     email = current_email()
     log_analysis_event(email=email, meta={"setor": ctx["setor"], "papel": ctx["papel"], "len": len(text)})
 
+    # Resumo + registro detalhado para admin
     resume = summarize_hits(hits)
-    st.success(f"Resumo: {resume['resumo']}")
+    resumo_uma_linha = simplify_text_pt(resume.get("resumo", ""))
+    st.success(f"Resumo em 1 frase: {resumo_uma_linha}")
     st.write(f"Gravidade: **{resume['gravidade']}** | Pontos críticos: **{resume['criticos']}** | Total identificados: {len(hits)}")
 
-    # salva consulta detalhada (para admin/export)
     try:
         log_consult(
             nome=st.session_state.profile.get("nome",""),
@@ -512,18 +556,52 @@ def results_section(text: str, ctx: Dict[str, Any]):
             valor_max=ctx["limite_valor"],
             text_len=len(text),
             premium=is_premium(),
-            resumo=resume.get("resumo","")
+            resumo=resumo_uma_linha
         )
     except Exception:
         pass
 
+    # Resumo rápido (1 linha por ponto)
+    with st.expander("🧭 Resumo rápido (1 linha por ponto)", expanded=True):
+        for h in hits[:5]:
+            st.write("• " + one_line_summary(h))
+
+    # Lista detalhada com linguagem simples vs técnica
     for h in hits:
-        with st.expander(f"{h['severity']} • {h['title']}", expanded=False):
-            st.write(h["explanation"])
-            if h.get("suggestion"):
-                st.markdown(f"**Sugestão:** {h['suggestion']}")
-            if h.get("evidence"):
-                st.code(h["evidence"][:1200])
+        titulo = h.get("title", "Ponto de atenção")
+        sev    = h.get("severity", "Médio")
+        explic = h.get("explanation", "")
+        sugest = h.get("suggestion", "")
+        evid   = h.get("evidence", "")
+
+        if st.session_state.get("lang_level") == "Simples (recomendado)":
+            explic_s = simplify_text_pt(explic)
+            sugest_s = simplify_text_pt(sugest) if sugest else ""
+        else:
+            explic_s = explic
+            sugest_s = sugest
+
+        with st.expander(f"{sev} • {titulo}", expanded=False):
+            st.markdown("**O problema**")
+            st.write(explic_s or "—")
+
+            st.markdown("**O que isso significa pra você**")
+            impacto = "Pode gerar custos inesperados, risco jurídico ou travar a rescisão do contrato."
+            if re.search(r"mult(a|as)|penal", explic, flags=re.I):
+                impacto = "Pode gerar multa alta se você atrasar ou quiser encerrar o contrato."
+            elif re.search(r"foro|jurisdi", explic, flags=re.I):
+                impacto = "Se houver disputa, você pode ter de ir a um tribunal longe da sua cidade."
+            elif re.search(r"dado(s)? pessoais|LGPD", explic, flags=re.I):
+                impacto = "Seus dados podem ser usados de forma ampla; há risco de descumprir a Lei de Proteção de Dados."
+            st.write(simplify_text_pt(impacto))
+
+            st.markdown("**O que fazer agora**")
+            acao = sugest_s or "Peça para ajustar a cláusula, limitar responsabilidades e manter o foro na sua cidade."
+            st.write(acao)
+
+            if evid:
+                with st.expander("📎 Trecho do contrato (evidência)"):
+                    st.code(evid[:1200])
 
     cet_calculator_block()
 
@@ -532,12 +610,12 @@ def results_section(text: str, ctx: Dict[str, Any]):
     buff.write(f"{APP_TITLE} {VERSION}\n")
     buff.write(f"Usuário: {st.session_state.profile.get('nome')} <{email}>  •  Papel: {ctx['papel']}\n")
     buff.write(f"Setor: {ctx['setor']}  |  Valor máx.: {ctx['limite_valor']}\n\n")
-    buff.write(f"Resumo: {resume['resumo']} (Gravidade: {resume['gravidade']})\n\n")
+    buff.write(f"Resumo: {resumo_uma_linha} (Gravidade: {resume['gravidade']})\n\n")
     buff.write("Pontos de atenção:\n")
     for h in hits:
-        buff.write(f"- [{h['severity']}] {h['title']} — {h['explanation']}\n")
+        buff.write(f"- [{h['severity']}] {h['title']} — {simplify_text_pt(h.get('explanation',''))}\n")
         if h.get("suggestion"):
-            buff.write(f"  Sugestão: {h['suggestion']}\n")
+            buff.write(f"  Sugestão: {simplify_text_pt(h['suggestion'])}\n")
     st.download_button(
         "📥 Baixar relatório (txt)",
         data=buff.getvalue(),
@@ -545,6 +623,15 @@ def results_section(text: str, ctx: Dict[str, Any]):
         mime="text/plain",
         use_container_width=True,
     )
+
+    # Glossário rápido
+    with st.expander("📚 Glossário rápido (sem juridiquês)"):
+        st.write("- **Lei de Proteção de Dados (LGPD)**: regras sobre como seus dados podem ser coletados e usados.")
+        st.write("- **Foro/Foro de eleição**: cidade/tribunal onde processos devem ser julgados.")
+        st.write("- **Multas/penalidades**: quanto você paga se descumprir algo do contrato.")
+        st.write("- **Rescisão**: encerrar o contrato.")
+        st.write("- **CET (Custo Efetivo Total)**: juros + tarifas + seguros e outros custos do financiamento/parcelado.")
+        st.write("- **Indenização**: pagamento por prejuízos causados.")
 
 # =============================================================================
 # Orquestração
