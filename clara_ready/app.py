@@ -1,12 +1,13 @@
 # app.py
 # CLARA • Análise de Contratos
-# UX caprichado + Stripe robusto + cadastro mínimo + admin seguro
+# UX caprichado + Stripe robusto + cadastro mínimo + admin seguro + Hotjar + Logs completos
 
 import os
 import io
 from typing import Dict, Any, Tuple, Set, List
 
 import streamlit as st
+import streamlit.components.v1 as components
 from datetime import datetime
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from app_modules.storage import (
 # Config & Constantes
 # -------------------------------------------------
 APP_TITLE = "CLARA • Análise de Contratos"
-VERSION = "v12.2"
+VERSION = "v12.3"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
@@ -40,19 +41,29 @@ STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", os.getenv("STRIPE_SECRET
 STRIPE_PRICE_ID   = st.secrets.get("STRIPE_PRICE_ID",   os.getenv("STRIPE_PRICE_ID", ""))
 BASE_URL          = st.secrets.get("BASE_URL",          os.getenv("BASE_URL", "https://claraready.streamlit.app"))
 
+# Hotjar
+HOTJAR_ID = st.secrets.get("HOTJAR_ID", os.getenv("HOTJAR_ID", ""))
+HOTJAR_SV = st.secrets.get("HOTJAR_SV", os.getenv("HOTJAR_SV", "6"))
+
 MONTHLY_PRICE_TEXT = "R$ 9,90/mês"
 
 # -------------------------------------------------
-# Registro simples de visitas (em /tmp/visits.csv)
+# Registro simples de visitas / consultas (CSV em /tmp)
 # -------------------------------------------------
 VISITS_CSV = Path("/tmp/visits.csv")
+CONSULTS_CSV = Path("/tmp/consultas.csv")
+
+def _safe_write_line(p: Path, line: str) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
 
 def log_visit(email: str) -> None:
+    """Salva timestamp UTC + e-mail (minúsculo) em /tmp/visits.csv."""
     if not (email or "").strip():
         return
-    VISITS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    with VISITS_CSV.open("a", encoding="utf-8") as f:
-        f.write(f"{datetime.utcnow().isoformat()},{email.strip().lower()}\n")
+    ts = datetime.utcnow().isoformat()
+    _safe_write_line(VISITS_CSV, f"{ts},{email.strip().lower()}")
 
 def read_visits() -> List[Dict[str, str]]:
     if not VISITS_CSV.exists():
@@ -64,7 +75,48 @@ def read_visits() -> List[Dict[str, str]]:
             if len(parts) == 2:
                 ts, em = parts
                 rows.append({"ts": ts, "email": em})
-    return rows  # ordem cronológica (mais antigo -> mais novo)
+    return rows
+
+def log_consultation(profile: Dict[str, str], ctx: Dict[str, Any], text_len: int, is_premium_flag: bool, resumo_curto: str) -> None:
+    """
+    Salva uma linha com:
+    ts, nome, email, cel, setor, papel, limite_valor, text_len, premium, resumo
+    """
+    ts = datetime.utcnow().isoformat()
+    nome = (profile.get("nome") or "").replace(",", " ")
+    email = (profile.get("email") or "").strip().lower()
+    cel = (profile.get("cel") or "").replace(",", " ")
+    setor = (ctx.get("setor") or "").replace(",", " ")
+    papel = (ctx.get("papel") or "").replace(",", " ")
+    limite = str(ctx.get("limite_valor") or 0)
+    premium = "sim" if is_premium_flag else "nao"
+    resumo = (resumo_curto or "").replace("\n", " ").replace(",", " ")[:180]
+    _safe_write_line(CONSULTS_CSV, ",".join([ts, nome, email, cel, setor, papel, limite, str(text_len), premium, resumo]))
+
+def read_consultations(limit: int = 100) -> List[Dict[str, str]]:
+    if not CONSULTS_CSV.exists():
+        return []
+    rows: List[Dict[str, str]] = []
+    with CONSULTS_CSV.open("r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.rstrip("\n").split(",")
+            # ts, nome, email, cel, setor, papel, limite, text_len, premium, resumo
+            if len(parts) >= 10:
+                rows.append({
+                    "ts": parts[0],
+                    "nome": parts[1],
+                    "email": parts[2],
+                    "cel": parts[3],
+                    "setor": parts[4],
+                    "papel": parts[5],
+                    "valor_max": parts[6],
+                    "texto_len": parts[7],
+                    "premium": parts[8],
+                    "resumo": ",".join(parts[9:])  # caso tenha vírgulas na cauda
+                })
+    # mais recentes primeiro e corta no limite
+    rows = rows[::-1][:limit]
+    return rows
 
 # -------------------------------------------------
 # Helpers/estado
@@ -135,6 +187,30 @@ st.write("🟢 Boot iniciou…")
 if not ok_boot:
     st.error(boot_msg)
     st.stop()
+
+# -------------------------------------------------
+# Hotjar
+# -------------------------------------------------
+def inject_hotjar():
+    if not HOTJAR_ID:
+        return
+    components.html(
+        f"""
+        <!-- Hotjar Tracking Code -->
+        <script>
+          (function(h,o,t,j,a,r){{
+              h.hj=h.hj||function(){{(h.hj.q=h.hj.q||[]).push(arguments)}};
+              h._hjSettings={{hjid:{HOTJAR_ID},hjsv:{HOTJAR_SV}}};
+              a=o.getElementsByTagName('head')[0];
+              r=o.createElement('script');r.async=1;
+              r.src=t+h._hjSettings.hjid+j+h._hjSettings.hjsv;
+              a.appendChild(r);
+          }})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');
+        </script>
+        """,
+        height=0,
+        scrolling=False,
+    )
 
 # -------------------------------------------------
 # Utilidades
@@ -234,12 +310,27 @@ def sidebar_profile():
                     if not visits:
                         st.write("Sem registros ainda.")
                     else:
-                        # mostra as 50 mais recentes
-                        ultimas = visits[-50:]
+                        ultimas = visits[-100:]
                         for v in reversed(ultimas):
                             st.write(f"{v.get('ts','')} — {v.get('email','(sem e-mail)')}")
             except Exception as e:
                 st.sidebar.error(f"Não foi possível ler visitas: {e}")
+
+            # Consultas (análises)
+            try:
+                consults = read_consultations(limit=200)
+                with st.sidebar.expander("📄 Últimas consultas (logs)", expanded=False):
+                    if not consults:
+                        st.write("Nenhuma consulta registrada ainda.")
+                    else:
+                        for c in consults:
+                            st.write(
+                                f"• {c['ts']} — {c['nome']} <{c['email']}> — {c['cel']} — "
+                                f"{c['setor']} / {c['papel']} — R$ {c['valor_max']} — "
+                                f"texto: {c['texto_len']} — premium: {c['premium']} — {c['resumo']}"
+                            )
+            except Exception as e:
+                st.sidebar.error(f"Não foi possível ler consultas: {e}")
 
 # -------------------------------------------------
 # Hero + Benefícios + Passo-a-passo + FAQ CET + Aviso legal + Preço
@@ -404,13 +495,25 @@ def results_section(text: str, ctx: Dict[str, Any]):
     if not is_premium():
         st.session_state.free_runs_left -= 1
 
-    # log de uso (útil p/ admin)
+    # log de uso (útil p/ admin) + log de consultas enriquecido
     email = current_email()
     log_analysis_event(email=email, meta={"setor": ctx["setor"], "papel": ctx["papel"], "len": len(text)})
 
     resume = summarize_hits(hits)
     st.success(f"Resumo: {resume['resumo']}")
     st.write(f"Gravidade: **{resume['gravidade']}** | Pontos críticos: **{resume['criticos']}** | Total identificados: {len(hits)}")
+
+    # salva consulta detalhada
+    try:
+        log_consultation(
+            profile=st.session_state.profile,
+            ctx=ctx,
+            text_len=len(text),
+            is_premium_flag=is_premium(),
+            resumo_curto=resume.get("resumo", ""),
+        )
+    except Exception:
+        pass
 
     for h in hits:
         with st.expander(f"{h['severity']} • {h['title']}", expanded=False):
@@ -440,6 +543,7 @@ def results_section(text: str, ctx: Dict[str, Any]):
 # Orquestração
 # -------------------------------------------------
 def main():
+    inject_hotjar()  # Hotjar em toda página
     sidebar_profile()
     handle_checkout_result()
     landing_block()
@@ -464,8 +568,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
