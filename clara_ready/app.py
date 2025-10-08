@@ -1,6 +1,5 @@
 # app.py — CLARA • Análise de Contratos
-# UX clean (tela inicial), linguagem simples, Stripe, logs CSV (visitas/consultas),
-# Hotjar, admin, calculadora CET e relatório.
+# Tela inicial limpa + linguagem simples + Stripe + CET + logs CSV + Hotjar + Admin
 
 import os
 import io
@@ -11,7 +10,7 @@ from typing import Dict, Any, Tuple, Set, List
 
 import streamlit as st
 
-# ---- seus módulos locais (mantém como estão no projeto) ----
+# ---- Seus módulos locais (mantém a estrutura existente) ----
 from app_modules.pdf_utils import extract_text_from_pdf
 from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
 from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
@@ -24,10 +23,10 @@ from app_modules.storage import (
 )
 
 # -------------------------------------------------
-# Configs gerais
+# Configs
 # -------------------------------------------------
 APP_TITLE = "CLARA • Análise de Contratos"
-VERSION = "v13.6"
+VERSION = "v14.0"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
@@ -38,35 +37,63 @@ STRIPE_PRICE_ID   = st.secrets.get("STRIPE_PRICE_ID",   os.getenv("STRIPE_PRICE_
 BASE_URL          = st.secrets.get("BASE_URL",          os.getenv("BASE_URL", "https://claraready.streamlit.app"))
 MONTHLY_PRICE_TEXT = "R$ 9,90/mês"
 
-# Hotjar (do seu screenshot)
+# Hotjar
 HOTJAR_ID = 6519667
 HOTJAR_SV = 6
 
-# CSV paths (em /tmp para rodar no Streamlit Cloud)
+# CSVs
 VISITS_CSV  = Path("/tmp/visitas.csv")
 CONSULT_CSV = Path("/tmp/consultas.csv")
 
 # -------------------------------------------------
-# Estilo simples (claro, sem preto chapado)
+# Estilo (clean, claro, sofisticado)
 # -------------------------------------------------
 st.markdown(
     """
     <style>
-      :root { --text:#0f172a; --muted:#475569; --pill:#eef2ff; --line:#e5e7eb; }
-      .hero-wrap{padding:5rem 1rem 2.5rem; text-align:center;}
-      .hero-title{font-size:56px; font-weight:800; letter-spacing:.5px; color:var(--text);}
-      .hero-p{max-width:940px; margin:14px auto 0; font-size:20px; color:var(--muted); line-height:1.6}
-      .pill{display:inline-block;background:var(--pill); border:1px solid #e0e7ff; padding:4px 10px; border-radius:999px; font-size:12.5px; color:#334155;}
-      .card{border:1px solid var(--line); border-radius:16px; padding:16px 18px; background:#ffffff}
-      .soft {font-size:13px; color:#64748b;}
-      .section-title{font-size:22px; font-weight:700; margin:8px 0 6px;}
+      :root{
+        --text:#0f172a; --muted:#475569; --line:#e5e7eb;
+        --brand:#4f46e5; --brand2:#6366f1; --bg:#f8fafc; --card:#ffffff;
+      }
+      .page{
+        background: radial-gradient(1200px 500px at 50% -120px, #eef2ff 20%, #fff 60%, #fff 100%);
+      }
+      .hero{
+        padding: 64px 12px 28px; text-align:center;
+      }
+      .hero-logo{
+        display:inline-block; padding:6px 12px; border-radius:999px;
+        background:#eef2ff; border:1px solid #e0e7ff; color:#334155; font-weight:600; font-size:12.5px;
+      }
+      .hero-title{
+        margin:10px 0 6px; font-size:56px; font-weight:800; color:var(--text); letter-spacing:.5px;
+      }
+      .hero-sub{
+        max-width:960px; margin:0 auto; font-size:20px; line-height:1.6; color:var(--muted);
+      }
+      .primary{
+        display:inline-block; margin-top:22px; padding:16px 26px;
+        border-radius:14px; border:0; color:#fff; font-weight:700; font-size:17px;
+        background:linear-gradient(90deg,var(--brand),var(--brand2));
+      }
+      .pitch{
+        max-width:960px; margin:26px auto 0; text-align:left; color:var(--muted); line-height:1.7;
+      }
+      .cards{ max-width:1050px; margin:26px auto 0; display:grid; gap:14px;
+              grid-template-columns:repeat(3, minmax(0,1fr)); }
+      .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 18px 14px; }
+      .card h4{ margin:4px 0 6px; font-size:18px; color:var(--text); }
+      .card p{ margin:0; color:var(--muted); font-size:15.5px; }
+      .section-title{ font-size:22px; font-weight:800; margin:8px 0 6px; color:var(--text);}
+      .soft{ font-size:13px; color:#64748b; }
+      .container-card{ background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # -------------------------------------------------
-# Estado inicial
+# Estado
 # -------------------------------------------------
 if "started" not in st.session_state:
     st.session_state.started = False
@@ -75,10 +102,10 @@ if "profile" not in st.session_state:
 if "premium" not in st.session_state:
     st.session_state.premium = False
 if "free_runs_left" not in st.session_state:
-    st.session_state.free_runs_left = 1  # 1 análise gratuita por e-mail nesta sessão
+    st.session_state.free_runs_left = 1
 
 # -------------------------------------------------
-# Utilidades / Admin
+# Utils / Admin
 # -------------------------------------------------
 def _parse_admin_emails() -> Set[str]:
     raw = st.secrets.get("admin_emails", None)
@@ -119,36 +146,31 @@ def stripe_diagnostics() -> Tuple[bool, str]:
     if not STRIPE_SECRET_KEY: miss.append("STRIPE_SECRET_KEY")
     if not STRIPE_PRICE_ID:   miss.append("STRIPE_PRICE_ID")
     if miss:
-        return False, f"Configure os segredos ausentes: {', '.join(miss)}."
+        return False, f"Configure os segredos: {', '.join(miss)}."
     if STRIPE_PRICE_ID.startswith("prod_"):
-        return False, "Use um **price_...** (não **prod_...**). No Stripe crie um Preço e copie o ID **price_...**"
+        return False, "Use um **price_...** (não **prod_...**)."
     if not STRIPE_PRICE_ID.startswith("price_"):
-        return False, "O STRIPE_PRICE_ID parece inválido. Deve começar com **price_...**"
+        return False, "O STRIPE_PRICE_ID deve começar com **price_...**"
     return True, ""
 
-# -------------------------------------------------
-# Hotjar
-# -------------------------------------------------
 def inject_hotjar(hjid: int = HOTJAR_ID, hjsv: int = HOTJAR_SV):
     st.markdown(
         f"""
         <script>
-          (function(h,o,t,j,a,r){{
-              h.hj=h.hj||function(){{(h.hj.q=h.hj.q||[]).push(arguments)}};
-              h._hjSettings={{hjid:{hjid},hjsv:{hjsv}}};
-              a=o.getElementsByTagName('head')[0];
-              r=o.createElement('script');r.async=1;
-              r.src='https://static.hotjar.com/c/hotjar-'+h._hjSettings.hjid+'.js?sv='+h._hjSettings.hjsv;
-              a.appendChild(r);
-          }})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');
+        (function(h,o,t,j,a,r){{
+          h.hj=h.hj||function(){{(h.hj.q=h.hj.q||[]).push(arguments)}};
+          h._hjSettings={{hjid:{hjid},hjsv:{hjsv}}};
+          a=o.getElementsByTagName('head')[0];
+          r=o.createElement('script');r.async=1;
+          r.src='https://static.hotjar.com/c/hotjar-'+h._hjSettings.hjid+'.js?sv='+h._hjSettings.hjsv;
+          a.appendChild(r);
+        }})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');
         </script>
         """,
         unsafe_allow_html=True,
     )
 
-# -------------------------------------------------
-# CSV helpers (visitas / consultas)
-# -------------------------------------------------
+# ---- CSV helpers ----
 def _ensure_csv(path: Path, header: List[str]):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -158,23 +180,19 @@ def _ensure_csv(path: Path, header: List[str]):
 def log_visit(email: str):
     if not (email or "").strip():
         return
-    _ensure_csv(VISITS_CSV, ["ts_utc", "email"])
+    _ensure_csv(VISITS_CSV, ["ts_utc","email"])
     with VISITS_CSV.open("a", newline="", encoding="utf-8") as f:
         csv.writer(f).writerow([datetime.utcnow().isoformat(), email.strip().lower()])
 
 def read_visits() -> List[Dict[str, str]]:
     if not VISITS_CSV.exists():
         return []
-    rows: List[Dict[str, str]] = []
     with VISITS_CSV.open("r", encoding="utf-8") as f:
-        for i, row in enumerate(csv.DictReader(f)):
-            rows.append(row)
-    return rows
+        return list(csv.DictReader(f))
 
 def log_consultation(payload: Dict[str, Any]):
-    header = ["ts_utc","nome","email","cel","papel","setor","valor_max","texto_len"]
-    _ensure_csv(CONSULT_CSV, header)
-    rec = [
+    _ensure_csv(CONSULT_CSV, ["ts_utc","nome","email","cel","papel","setor","valor_max","texto_len"])
+    row = [
         datetime.utcnow().isoformat(),
         st.session_state.profile.get("nome",""),
         st.session_state.profile.get("email",""),
@@ -185,10 +203,9 @@ def log_consultation(payload: Dict[str, Any]):
         payload.get("texto_len",""),
     ]
     with CONSULT_CSV.open("a", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow(rec)
+        csv.writer(f).writerow(row)
 
 def serve_csv_downloads():
-    # Exibe botões para baixar os CSVs
     if VISITS_CSV.exists():
         with VISITS_CSV.open("rb") as f:
             st.download_button("📥 Baixar visitas (CSV)", f, file_name="visitas.csv", mime="text/csv")
@@ -199,11 +216,11 @@ def serve_csv_downloads():
 # -------------------------------------------------
 # Boot (Stripe + DB)
 # -------------------------------------------------
-@st.cache_resource(show_spinner="Iniciando serviços…")
+@st.cache_resource(show_spinner="Preparando…")
 def _boot() -> Tuple[bool, str]:
     try:
         if not STRIPE_SECRET_KEY:
-            return False, "Faltando STRIPE_SECRET_KEY (Settings → Secrets)."
+            return False, "Faltando STRIPE_SECRET_KEY."
         init_stripe(STRIPE_SECRET_KEY)
         init_db()
         return True, ""
@@ -216,47 +233,63 @@ if not ok_boot:
     st.stop()
 
 # -------------------------------------------------
-# TELA 1 — Home clean com CTA único
+# Tela 1: clean + CTA único
 # -------------------------------------------------
 def first_screen():
-    inject_hotjar()  # métrica já na primeira visita
-    st.markdown('<div class="hero-wrap">', unsafe_allow_html=True)
-    st.markdown(f'<div class="pill">Nova versão • {VERSION}</div>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-title">CLARA</div>', unsafe_allow_html=True)
+    inject_hotjar()
+    st.markdown('<div class="page">', unsafe_allow_html=True)
+    st.markdown('<div class="hero">', unsafe_allow_html=True)
+    st.markdown(f'<span class="hero-logo">CLARA • {VERSION}</span>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-title">Entenda o que você está assinando</div>', unsafe_allow_html=True)
     st.markdown(
         """
-        <p class="hero-p">
-          Entenda seu contrato em linguagem simples. A CLARA encontra riscos, traduz “juridiquês”
-          (como <b>foro</b>, <b>LGPD</b>, <b>rescisão</b>) e sugere caminhos de negociação — rápido e direto ao ponto.
-        </p>
+        <div class="hero-sub">
+          A CLARA lê seu contrato, explica <b>em palavras simples</b> e mostra o que pode ser <b>problema</b> — como multas
+          altas, travas de cancelamento e responsabilidades exageradas.
+        </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # CTA
-    clicked = st.button("Iniciar análise do meu contrato", use_container_width=True)
-    if clicked:
+    if st.button("Iniciar análise do meu contrato", type="primary", use_container_width=True):
         st.session_state.started = True
-        # limpa caches atuais (se houver)
         try: st.cache_data.clear()
         except Exception: pass
         try: st.cache_resource.clear()
         except Exception: pass
         st.rerun()
 
-    # Educação curta e suave (sem “tom duro”)
     st.markdown(
         """
-        <div style="max-width:980px; margin:28px auto 0; color:#475569;">
-          <p><b>Milhões de brasileiros</b> assinam documentos legais sem entender completamente o que estão aceitando,
-          colocando negócios e patrimônio em risco desnecessário.</p>
-          <p>A frase <i>“Eu li e concordo com os termos e condições”</i> virou símbolo dessa rotina. A CLARA ajuda você a
-          ganhar clareza antes de assinar — como um <b>apoio</b> para conversar e negociar melhor (ela não substitui um(a) advogado(a)).</p>
+        <div class="pitch">
+          <p><b>Problema real:</b> muita gente clica “li e concordo” sem entender. Isso pode custar caro.</p>
+          <p><b>Como ajudamos:</b> você envia o contrato e recebe <b>trechos críticos + explicações simples + dicas de negociação</b>.
+             Use a CLARA como apoio para conversar com a outra parte e, se precisar, para levar ao seu advogado(a).</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown(
+        """
+        <div class="cards">
+          <div class="card">
+            <h4>🛡️ Proteção</h4>
+            <p>Detecta multas fora da realidade, travas de cancelamento e riscos escondidos.</p>
+          </div>
+          <div class="card">
+            <h4>🧩 Linguagem simples</h4>
+            <p>Traduz termos como <b>foro</b> (onde um processo acontece), <b>LGPD</b> (regras de dados) e <b>rescisão</b> (como encerrar).</p>
+          </div>
+          <div class="card">
+            <h4>📈 CET</h4>
+            <p>Mostra o custo total de um financiamento (juros + tarifas + taxas) para comparar propostas.</p>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown('</div></div>', unsafe_allow_html=True)
 
 # -------------------------------------------------
 # Sidebar — cadastro + admin
@@ -271,10 +304,8 @@ def sidebar_profile():
 
     if st.sidebar.button("Salvar perfil", use_container_width=True):
         st.session_state.profile = {"nome":nome.strip(),"email":email.strip(),"cel":cel.strip(),"papel":papel}
-        # log de visita
         try: log_visit(email.strip())
         except Exception: pass
-        # se já for assinante, sobe premium
         try:
             if current_email() and get_subscriber_by_email(current_email()):
                 st.session_state.premium = True
@@ -309,7 +340,7 @@ def sidebar_profile():
                 serve_csv_downloads()
 
 # -------------------------------------------------
-# Sessão de preço / Stripe
+# Preço / Stripe
 # -------------------------------------------------
 def pricing_card():
     st.markdown('<div class="section-title">Plano Premium</div>', unsafe_allow_html=True)
@@ -367,25 +398,14 @@ def handle_checkout_result():
         except Exception: pass
 
 # -------------------------------------------------
-# Seção educativa + preço (após cadastro)
+# Conteúdo + preço (depois de iniciar)
 # -------------------------------------------------
 def landing_block():
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("### Tudo o que importa no seu contrato — em linguagem simples")
-    st.write(
-        "A CLARA destaca riscos, explica o que significam e sugere como negociar. "
-        "Direto ao ponto, sem juridiquês."
-    )
-    cols = st.columns(3)
-    with cols[0]:
-        st.markdown("**🛡️ Proteção**")
-        st.write("Enxerga multas fora da realidade, travas de rescisão e responsabilidades exageradas.")
-    with cols[1]:
-        st.markdown("**📚 Clareza**")
-        st.write("Traduz termos como **foro** (onde o processo corre), **LGPD** (dados pessoais) e **rescisão**.")
-    with cols[2]:
-        st.markdown("**📈 CET**")
-        st.write("Calcula o custo efetivo total (juros + tarifas + taxas) em contratos financeiros.")
+    st.markdown('<div class="container-card">', unsafe_allow_html=True)
+    st.markdown("### O que você recebe")
+    st.write("• Trechos críticos do contrato → **explicados em linguagem simples**.")
+    st.write("• Sinais de alerta (multas altas, travas, riscos): **o que significam** e **como negociar**.")
+    st.write("• **Relatório** para compartilhar com seu time ou advogado(a).")
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("")
@@ -407,7 +427,7 @@ def upload_or_paste_section() -> str:
 
 def analysis_inputs() -> Dict[str, Any]:
     st.subheader("2) Contexto")
-    c1, c2, c3 = st.columns(3)
+    c1,c2,c3 = st.columns(3)
     setor = c1.selectbox("Setor", ["Genérico","SaaS/Serviços","Empréstimos","Educação","Plano de saúde"])
     papel = c2.selectbox("Perfil", ["Contratante","Contratado","Outro"])
     valor = c3.number_input("Valor máx. (opcional)", min_value=0.0, step=100.0)
@@ -422,7 +442,7 @@ def cet_calculator_block():
         fee = st.number_input("Taxas fixas totais (R$)", min_value=0.0, step=10.0, key="cet_fee")
         if st.button("Calcular CET", key="btn_calc_cet"):
             cet = compute_cet_quick(P, i_m/100.0, int(n), fee)
-            st.success(f"**CET aproximado:** {cet*100:.2f}% a.m.")
+            st.success(f"**CET aproximado:** {cet*100:.2f}% ao mês")
 
 def results_section(text: str, ctx: Dict[str, Any]):
     st.subheader("4) Resultado")
@@ -434,7 +454,6 @@ def results_section(text: str, ctx: Dict[str, Any]):
         st.warning("Envie o contrato (PDF) ou cole o texto para analisar.")
         return
 
-    # Cota free
     if not is_premium() and st.session_state.free_runs_left <= 0:
         st.info("Você usou sua análise gratuita. **Assine o Premium** para continuar.")
         return
@@ -445,26 +464,22 @@ def results_section(text: str, ctx: Dict[str, Any]):
     if not is_premium():
         st.session_state.free_runs_left -= 1
 
-    # log técnico e CSV
     email = current_email()
     log_analysis_event(email=email, meta={"setor":ctx["setor"], "papel":ctx["papel"], "len":len(text)})
     log_consultation({"setor":ctx["setor"], "valor_max":ctx["limite_valor"], "texto_len":len(text)})
 
     resume = summarize_hits(hits)
-    st.success(f"Resumo rápido: {resume['resumo']}")
-    st.write(f"Gravidade: **{resume['gravidade']}** | Pontos críticos: **{resume['criticos']}** | Total identificados: {len(hits)}")
+    st.success(f"Resumo: {resume['resumo']}")
+    st.write(f"Gravidade: **{resume['gravidade']}** | Pontos críticos: **{resume['criticos']}** | Itens analisados: {len(hits)}")
 
-    # Explicações simples por ponto
     for h in hits:
         with st.expander(f"{h['severity']} • {h['title']}", expanded=False):
-            # linguagem simples extra
+            # sempre em linguagem simples
             st.write(h["explanation"])
-            dica = h.get("suggestion")
-            if dica:
-                st.markdown(f"**Como negociar:** {dica}")
-            evid = h.get("evidence")
-            if evid:
-                st.code(evid[:1200])
+            if h.get("suggestion"):
+                st.markdown(f"**Como negociar:** {h['suggestion']}")
+            if h.get("evidence"):
+                st.code(h["evidence"][:1200])
 
     cet_calculator_block()
 
@@ -483,14 +498,13 @@ def results_section(text: str, ctx: Dict[str, Any]):
                        file_name="relatorio_clara.txt", mime="text/plain")
 
 # -------------------------------------------------
-# Orquestração
+# Main
 # -------------------------------------------------
 def main():
     if not st.session_state.started:
         first_screen()
         return
 
-    # a partir daqui é o fluxo completo
     sidebar_profile()
     handle_checkout_result()
     landing_block()
@@ -507,10 +521,12 @@ def main():
 
     st.markdown("---")
     st.markdown(
-        '<p class="soft">A CLARA complementa a leitura do seu contrato e ajuda na conversa e negociação, '
-        'mas não substitui a orientação de um(a) advogado(a).</p>',
+        '<p class="soft">A CLARA ajuda a entender e negociar melhor, '
+        'mas <b>não substitui</b> a orientação de um(a) advogado(a).</p>',
         unsafe_allow_html=True
     )
 
 if __name__ == "__main__":
     main()
+
+
