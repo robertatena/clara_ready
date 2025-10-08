@@ -1,6 +1,6 @@
 # app.py
 # CLARA • Análise de Contratos
-# UX caprichado • Stripe robusto • Admin com logs & export (CSV/XLSX) • Hotjar • Linguagem simples
+# UI estilo iCloud • Stripe robusto • Admin com logs & export (CSV/XLSX) • Hotjar • Linguagem simples
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from app_modules.storage import (
 # Configurações & Constantes
 # =============================================================================
 APP_TITLE = "CLARA • Análise de Contratos"
-VERSION   = "v14.0"
+VERSION   = "v15.0"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
@@ -132,22 +132,67 @@ def _parse_admin_emails() -> Set[str]:
 ADMIN_EMAILS = _parse_admin_emails()
 
 # =============================================================================
-# CSS + Hotjar
+# CSS + Hotjar (UI inspirada em iCloud: gradientes suaves + glass cards)
 # =============================================================================
 st.markdown(
     """
     <style>
+      :root {
+        --bg1: #f6f7fb;
+        --bg2: #ffffff;
+        --primary: #1f4fff; /* azul Apple-like */
+        --muted: #62666f;
+        --glass: rgba(255,255,255,0.65);
+        --glass-border: rgba(255,255,255,0.55);
+      }
+      /* background geral */
+      .main .block-container {
+        padding-top: 1.2rem;
+      }
+      body {
+        background: radial-gradient(1200px 800px at 20% 5%, #eef2ff 0%, var(--bg1) 55%) fixed;
+      }
+      /* topbar simples */
+      .topbar {
+        position: sticky; top: 0; z-index: 1000;
+        backdrop-filter: saturate(160%) blur(16px);
+        background: linear-gradient(180deg, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.50) 100%);
+        border-bottom: 1px solid rgba(255,255,255,0.6);
+        padding: 10px 16px; border-radius: 0 0 14px 14px;
+        margin-bottom: 14px;
+      }
+      .topbar h3 { margin: 0; font-weight: 600; letter-spacing: 0.2px; }
       .hero {
-        padding: 18px 22px; border-radius: 14px;
-        background: linear-gradient(180deg, #f7f8ff 0%, #ffffff 100%);
-        border: 1px solid #eceffd; margin-bottom: 16px;
+        padding: 24px; border-radius: 18px;
+        background: linear-gradient(160deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.60) 100%);
+        border: 1px solid var(--glass-border); margin-bottom: 18px;
+        box-shadow: 0 6px 24px rgba(31,79,255,0.08);
+        backdrop-filter: blur(10px) saturate(150%);
       }
       .pill {
-        display:inline-block; padding:4px 10px; border-radius:999px;
-        background:#eef1ff; border:1px solid #e3e6ff; font-size:12.5px; color:#3142c6;
+        display:inline-block; padding:6px 12px; border-radius:999px;
+        background:#eef2ff; border:1px solid #e3e6ff; font-size:12.5px; color:#3142c6;
       }
-      .muted { color:#5c6370; }
+      .muted { color: var(--muted); }
+      .card {
+        border-radius: 16px; background: var(--glass);
+        border: 1px solid var(--glass-border);
+        padding: 18px; margin-bottom: 14px;
+        box-shadow: 0 6px 18px rgba(31,79,255,0.06);
+        backdrop-filter: blur(8px) saturate(140%);
+      }
       .footer-note { font-size: 12.5px; color:#6e7480; }
+      /* botões maiores */
+      .stButton button {
+        height: 44px; font-weight: 600; border-radius: 12px;
+      }
+      .stDownloadButton button {
+        height: 44px; border-radius: 12px;
+      }
+      /* inputs arredondados */
+      .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {
+        border-radius: 10px !important;
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -203,7 +248,7 @@ def _boot() -> Tuple[bool, str]:
         return False, f"Falha ao iniciar serviços: {e}"
 
 ok_boot, boot_msg = _boot()
-st.write("🟢 Boot iniciou…")
+st.markdown('<div class="topbar"><h3>CLARA</h3></div>', unsafe_allow_html=True)
 if not ok_boot:
     st.error(boot_msg)
     st.stop()
@@ -285,28 +330,29 @@ def stripe_diagnostics() -> Tuple[bool, str]:
 # =============================================================================
 def sidebar_profile():
     st.sidebar.header("🔐 Seus dados (obrigatório)")
-    nome  = st.sidebar.text_input("Nome completo*", value=st.session_state.profile.get("nome", ""))
-    email = st.sidebar.text_input("E-mail*",        value=st.session_state.profile.get("email", ""))
-    cel   = st.sidebar.text_input("Celular*",       value=st.session_state.profile.get("cel", ""))
-    papel = st.sidebar.selectbox(
-        "Você é o contratante?*",
-        ["Contratante", "Contratado", "Outro"],
-        index=["Contratante","Contratado","Outro"].index(st.session_state.profile.get("papel", "Contratante"))
-    )
+    with st.sidebar.container():
+        nome  = st.text_input("Nome completo*", value=st.session_state.profile.get("nome", ""))
+        email = st.text_input("E-mail*",        value=st.session_state.profile.get("email", ""))
+        cel   = st.text_input("Celular*",       value=st.session_state.profile.get("cel", ""))
+        papel = st.selectbox(
+            "Você é o contratante?*",
+            ["Contratante", "Contratado", "Outro"],
+            index=["Contratante","Contratado","Outro"].index(st.session_state.profile.get("papel", "Contratante"))
+        )
 
-    if st.sidebar.button("Salvar perfil", use_container_width=True):
-        st.session_state.profile = {"nome": nome.strip(), "email": email.strip(), "cel": cel.strip(), "papel": papel}
-        try:
-            log_visit(email.strip())
-        except Exception:
-            pass
-        # sobe premium se já for assinante
-        try:
-            if current_email() and get_subscriber_by_email(current_email()):
-                st.session_state.premium = True
-        except Exception:
-            pass
-        st.sidebar.success("Dados salvos!")
+        if st.button("Salvar perfil", use_container_width=True):
+            st.session_state.profile = {"nome": nome.strip(), "email": email.strip(), "cel": cel.strip(), "papel": papel}
+            try:
+                log_visit(email.strip())
+            except Exception:
+                pass
+            # sobe premium se já for assinante
+            try:
+                if current_email() and get_subscriber_by_email(current_email()):
+                    st.session_state.premium = True
+            except Exception:
+                pass
+            st.success("Dados salvos!")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Administração")
@@ -375,10 +421,11 @@ def sidebar_profile():
             st.sidebar.error(f"Não foi possível ler consultas: {e}")
 
 # =============================================================================
-# Landing: benefícios + preço + aviso legal
+# Landing: benefícios + preço + aviso legal (suave)
 # =============================================================================
 def pricing_card():
-    st.markdown("### Plano Premium")
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("#### Plano Premium")
     st.caption(f"{MONTHLY_PRICE_TEXT} • análises ilimitadas • suporte prioritário")
 
     okS, msgS = stripe_diagnostics()
@@ -386,61 +433,66 @@ def pricing_card():
 
     if not email:
         st.info("Informe e salve seu **nome, e-mail e celular** na barra lateral para assinar.")
+        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     if st.button("💳 Assinar Premium agora", use_container_width=True):
         if not okS:
-            st.error(msgS); return
-        try:
-            sess = create_checkout_session(
-                price_id=STRIPE_PRICE_ID,
-                customer_email=email,
-                success_url=f"{BASE_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=f"{BASE_URL}?canceled=true",
-            )
-            if sess.get("url"):
-                st.success("Sessão criada! Clique abaixo para abrir o checkout seguro.")
-                st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
-            else:
-                st.error(sess.get("error", "Stripe indisponível no momento. Tente novamente."))
-        except Exception as e:
-            st.error(f"Stripe indisponível no momento. Detalhe: {e}")
+            st.error(msgS)
+        else:
+            try:
+                sess = create_checkout_session(
+                    price_id=STRIPE_PRICE_ID,
+                    customer_email=email,
+                    success_url=f"{BASE_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+                    cancel_url=f"{BASE_URL}?canceled=true",
+                )
+                if sess.get("url"):
+                    st.success("Sessão criada! Clique abaixo para abrir o checkout seguro.")
+                    st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
+                else:
+                    st.error(sess.get("error", "Stripe indisponível no momento. Tente novamente."))
+            except Exception as e:
+                st.error(f"Stripe indisponível no momento. Detalhe: {e}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def landing_block():
-    with st.container():
-        st.markdown(
-            f"""
-            <div class="hero">
-              <div class="pill">Nova versão • {VERSION}</div>
-              <h1 style="margin:8px 0 4px 0;">{APP_TITLE}</h1>
-              <p class="muted" style="margin:0;">
-                Descubra <b>cláusulas abusivas</b>, <b>riscos ocultos</b> e <b>o que negociar</b> — em segundos.
-              </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        c1, c2 = st.columns([1.25, 1])
-        with c1:
-            st.markdown("### Por que usar a CLARA")
-            st.markdown("• Destaca multas fora da realidade, travas de rescisão e responsabilidades exageradas")
-            st.markdown("• Resume em linguagem simples e sugere **o que negociar**")
-            st.markdown("• Calculadora de **CET – Custo Efetivo Total** (juros + tarifas + taxas)")
-            st.markdown("• Relatório para compartilhar com seu time ou advogado(a)")
-            with st.expander("O que é CET (Custo Efetivo Total)?"):
-                st.write(
-                    "O **CET** é a taxa que representa **todo o custo** de um financiamento/parcelamento "
-                    "(juros + tarifas + seguros + outras cobranças). Ajuda a comparar propostas e enxergar "
-                    "o custo real além do “só juros”."
-                )
-            st.markdown("### Como funciona")
-            st.markdown("1) Envie o PDF **ou** cole o texto do contrato")
-            st.markdown("2) Selecione **setor**, **perfil** e (opcional) valor")
-            st.markdown("3) Receba **trecho + explicação + ação de negociação**")
-            st.markdown("4) (Opcional) Calcule o **CET**")
-            st.info("**Aviso legal**: A CLARA **não substitui um(a) advogado(a)**. Use para triagem e preparo da negociação.")
-        with c2:
-            pricing_card()
+    st.markdown(
+        f"""
+        <div class="hero">
+          <div class="pill">Nova versão • {VERSION}</div>
+          <h1 style="margin:10px 0 6px 0;">{APP_TITLE}</h1>
+          <p class="muted" style="margin:0;">
+            Encontre cláusulas sensíveis, entenda riscos e saiba como negociar — em minutos.
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    c1, c2 = st.columns([1.25, 1])
+    with c1:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("### Por que usar a CLARA")
+        st.markdown("• Destaca multas altas, travas de rescisão e responsabilidades exageradas")
+        st.markdown("• Explica em linguagem simples e sugere **o que negociar**")
+        st.markdown("• Calculadora de **CET – Custo Efetivo Total** (juros + tarifas + taxas)")
+        st.markdown("• Relatório para compartilhar com seu time ou advogado(a)")
+        with st.expander("O que é CET (Custo Efetivo Total)?"):
+            st.write(
+                "O **CET** é a taxa que representa **todo o custo** de um financiamento/parcelamento "
+                "(juros + tarifas + seguros + outras cobranças). Ajuda a comparar propostas e enxergar "
+                "o custo real além do “só juros”."
+            )
+        st.markdown("### Como funciona")
+        st.markdown("1) Envie o PDF **ou** cole o texto do contrato")
+        st.markdown("2) Selecione **setor**, **perfil** e (opcional) valor")
+        st.markdown("3) Receba **trecho + explicação + plano de ação**")
+        st.markdown("4) (Opcional) Calcule o **CET**")
+        st.info("**Nota**: A CLARA é um apoio inteligente que **complementa** o trabalho de profissionais do Direito; "
+                "não substitui orientação jurídica individual.")
+        st.markdown('</div>', unsafe_allow_html=True)
+    with c2:
+        pricing_card()
 
 # =============================================================================
 # Stripe: retorno seguro
@@ -480,6 +532,7 @@ def handle_checkout_result():
 # Entrada (upload/texto) + Inputs + CET + Resultado
 # =============================================================================
 def upload_or_paste_section() -> str:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("1) Envie o contrato")
     file = st.file_uploader("PDF do contrato", type=["pdf"])
     raw_text = ""
@@ -488,23 +541,26 @@ def upload_or_paste_section() -> str:
             raw_text = extract_text_from_pdf(file)
     st.markdown("Ou cole o texto abaixo:")
     raw_text = st.text_area("Texto do contrato", height=220, value=raw_text or "")
+    st.markdown('</div>', unsafe_allow_html=True)
     return raw_text
 
 def analysis_inputs() -> Dict[str, Any]:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("2) Contexto")
     col1, col2, col3 = st.columns(3)
     setor = col1.selectbox("Setor", ["Genérico", "SaaS/Serviços", "Empréstimos", "Educação", "Plano de saúde"])
     papel = col2.selectbox("Perfil", ["Contratante", "Contratado", "Outro"])
     valor_max = col3.number_input("Valor máx. (opcional)", min_value=0.0, step=100.0)
-    # seletor de linguagem (anti-juridiquês)
     st.session_state.lang_level = st.radio(
         "Nível de linguagem",
         ["Simples (recomendado)", "Técnico"],
         index=0, horizontal=True
     )
+    st.markdown('</div>', unsafe_allow_html=True)
     return {"setor": setor, "papel": papel, "limite_valor": valor_max}
 
 def cet_calculator_block():
+    st.markdown('<div class="card">', unsafe_allow_html=True)
     with st.expander("📈 Calculadora de CET (opcional)", expanded=False):
         col1, col2, col3 = st.columns(3)
         P   = col1.number_input("Valor principal (R$)", min_value=0.0, step=100.0, key="cet_p")
@@ -514,20 +570,25 @@ def cet_calculator_block():
         if st.button("Calcular CET", key="btn_calc_cet"):
             cet = compute_cet_quick(P, i_m / 100.0, int(n), fee)
             st.success(f"**CET aproximado:** {cet*100:.2f}% a.m.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def results_section(text: str, ctx: Dict[str, Any]):
+    st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("4) Resultado")
 
     if not require_profile():
         st.info("Preencha e salve **nome, e-mail e celular** na barra lateral para liberar a análise.")
+        st.markdown('</div>', unsafe_allow_html=True)
         return
     if not text.strip():
         st.warning("Envie o contrato (PDF) ou cole o texto para analisar.")
+        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     # Free / Premium
     if not is_premium() and st.session_state.free_runs_left <= 0:
         st.info("Você usou sua análise gratuita. **Assine o Premium** para continuar.")
+        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     with st.spinner("Analisando…"):
@@ -603,9 +664,12 @@ def results_section(text: str, ctx: Dict[str, Any]):
                 with st.expander("📎 Trecho do contrato (evidência)"):
                     st.code(evid[:1200])
 
+    st.markdown('</div>', unsafe_allow_html=True)
+
     cet_calculator_block()
 
     # Relatório (download .txt)
+    st.markdown('<div class="card">', unsafe_allow_html=True)
     buff = io.StringIO()
     buff.write(f"{APP_TITLE} {VERSION}\n")
     buff.write(f"Usuário: {st.session_state.profile.get('nome')} <{email}>  •  Papel: {ctx['papel']}\n")
@@ -623,15 +687,7 @@ def results_section(text: str, ctx: Dict[str, Any]):
         mime="text/plain",
         use_container_width=True,
     )
-
-    # Glossário rápido
-    with st.expander("📚 Glossário rápido (sem juridiquês)"):
-        st.write("- **Lei de Proteção de Dados (LGPD)**: regras sobre como seus dados podem ser coletados e usados.")
-        st.write("- **Foro/Foro de eleição**: cidade/tribunal onde processos devem ser julgados.")
-        st.write("- **Multas/penalidades**: quanto você paga se descumprir algo do contrato.")
-        st.write("- **Rescisão**: encerrar o contrato.")
-        st.write("- **CET (Custo Efetivo Total)**: juros + tarifas + seguros e outros custos do financiamento/parcelado.")
-        st.write("- **Indenização**: pagamento por prejuízos causados.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # =============================================================================
 # Orquestração
@@ -641,9 +697,10 @@ def main():
     handle_checkout_result()
     landing_block()
 
-    st.markdown("---")
+    st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown("### Comece sua análise")
-    st.caption("Preencha os seus dados na barra lateral antes de enviar o contrato.")
+    st.caption("Preencha seus dados na barra lateral antes de enviar o contrato.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
     text = upload_or_paste_section()
     ctx  = analysis_inputs()
@@ -654,10 +711,12 @@ def main():
 
     st.markdown("---")
     st.markdown(
-        '<p class="footer-note">A CLARA auxilia na leitura e entendimento de contratos, '
-        'mas <b>não substitui</b> a avaliação de um(a) advogado(a).</p>',
+        '<p class="footer-note">A CLARA é um apoio inteligente que '
+        '<b>complementa</b> o trabalho de profissionais do Direito; '
+        'não substitui orientação jurídica individual.</p>',
         unsafe_allow_html=True
     )
 
 if __name__ == "__main__":
     main()
+
