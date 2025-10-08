@@ -1,5 +1,5 @@
 # app.py — CLARA • Análise de Contratos
-# Tela inicial limpa + linguagem simples + Stripe + CET + logs CSV + Hotjar + Admin
+# Home clean & alinhada + linguagem simples + Stripe + CET + logs CSV + Hotjar + Admin
 
 import os
 import io
@@ -10,7 +10,7 @@ from typing import Dict, Any, Tuple, Set, List
 
 import streamlit as st
 
-# ---- Seus módulos locais (mantém a estrutura existente) ----
+# ---- módulos locais (mantêm sua estrutura) ----
 from app_modules.pdf_utils import extract_text_from_pdf
 from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
 from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
@@ -26,7 +26,7 @@ from app_modules.storage import (
 # Configs
 # -------------------------------------------------
 APP_TITLE = "CLARA • Análise de Contratos"
-VERSION = "v14.0"
+VERSION = "v14.1"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
@@ -35,6 +35,7 @@ STRIPE_PUBLIC_KEY = st.secrets.get("STRIPE_PUBLIC_KEY", os.getenv("STRIPE_PUBLIC
 STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", os.getenv("STRIPE_SECRET_KEY", ""))
 STRIPE_PRICE_ID   = st.secrets.get("STRIPE_PRICE_ID",   os.getenv("STRIPE_PRICE_ID", ""))
 BASE_URL          = st.secrets.get("BASE_URL",          os.getenv("BASE_URL", "https://claraready.streamlit.app"))
+
 MONTHLY_PRICE_TEXT = "R$ 9,90/mês"
 
 # Hotjar
@@ -46,7 +47,7 @@ VISITS_CSV  = Path("/tmp/visitas.csv")
 CONSULT_CSV = Path("/tmp/consultas.csv")
 
 # -------------------------------------------------
-# Estilo (clean, claro, sofisticado)
+# Estilo: home impecável, centralizada e responsiva
 # -------------------------------------------------
 st.markdown(
     """
@@ -55,38 +56,60 @@ st.markdown(
         --text:#0f172a; --muted:#475569; --line:#e5e7eb;
         --brand:#4f46e5; --brand2:#6366f1; --bg:#f8fafc; --card:#ffffff;
       }
-      .page{
-        background: radial-gradient(1200px 500px at 50% -120px, #eef2ff 20%, #fff 60%, #fff 100%);
+
+      /* plano de fundo suave da home */
+      .page-hero{
+        background:
+          radial-gradient(1200px 500px at 50% -150px, #eef2ff 20%, #fff 60%, #fff 100%);
+        padding: 32px 0 6px;
       }
-      .hero{
-        padding: 64px 12px 28px; text-align:center;
+
+      /* largura máxima e alinhamento central */
+      .wrap{
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 0 24px;
       }
-      .hero-logo{
+
+      .chip{
         display:inline-block; padding:6px 12px; border-radius:999px;
         background:#eef2ff; border:1px solid #e0e7ff; color:#334155; font-weight:600; font-size:12.5px;
       }
-      .hero-title{
-        margin:10px 0 6px; font-size:56px; font-weight:800; color:var(--text); letter-spacing:.5px;
+
+      .title{
+        margin: 18px 0 8px; font-size: clamp(34px, 6vw, 58px);
+        font-weight: 800; color: var(--text); letter-spacing:.3px; line-height:1.06;
       }
-      .hero-sub{
-        max-width:960px; margin:0 auto; font-size:20px; line-height:1.6; color:var(--muted);
+
+      .subtitle{
+        max-width: 900px; font-size: 19px; line-height: 1.7; color: var(--muted);
+        margin: 0 0 18px;
       }
-      .primary{
-        display:inline-block; margin-top:22px; padding:16px 26px;
-        border-radius:14px; border:0; color:#fff; font-weight:700; font-size:17px;
-        background:linear-gradient(90deg,var(--brand),var(--brand2));
+
+      /* centraliza o botão apenas na seção hero */
+      .hero-cta .stButton > button{
+        background: linear-gradient(90deg, var(--brand), var(--brand2));
+        color: #fff; border: 0; border-radius: 14px; padding: 14px 22px;
+        font-weight: 700; font-size: 17px; box-shadow: 0 8px 24px rgba(79,70,229,.18);
       }
-      .pitch{
-        max-width:960px; margin:26px auto 0; text-align:left; color:var(--muted); line-height:1.7;
+      .hero-cta .stButton > button:hover{
+        filter: brightness(1.03);
       }
-      .cards{ max-width:1050px; margin:26px auto 0; display:grid; gap:14px;
-              grid-template-columns:repeat(3, minmax(0,1fr)); }
-      .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 18px 14px; }
-      .card h4{ margin:4px 0 6px; font-size:18px; color:var(--text); }
-      .card p{ margin:0; color:var(--muted); font-size:15.5px; }
-      .section-title{ font-size:22px; font-weight:800; margin:8px 0 6px; color:var(--text);}
+
+      .pitch{ color:var(--muted); line-height:1.75; font-size:16px; }
+
+      /* cards de valor */
+      .cards{ display:grid; gap:16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      @media (max-width: 980px){ .cards{ grid-template-columns: 1fr; } }
+      .card{
+        background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px;
+      }
+      .card h4{ margin:4px 0 6px; font-size:18px; color:var(--text);}
+      .card p{ margin:0; color:var(--muted); font-size:15.5px;}
+
+      .section{ background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px; }
+
       .soft{ font-size:13px; color:#64748b; }
-      .container-card{ background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -145,12 +168,9 @@ def stripe_diagnostics() -> Tuple[bool, str]:
     if not STRIPE_PUBLIC_KEY: miss.append("STRIPE_PUBLIC_KEY")
     if not STRIPE_SECRET_KEY: miss.append("STRIPE_SECRET_KEY")
     if not STRIPE_PRICE_ID:   miss.append("STRIPE_PRICE_ID")
-    if miss:
-        return False, f"Configure os segredos: {', '.join(miss)}."
-    if STRIPE_PRICE_ID.startswith("prod_"):
-        return False, "Use um **price_...** (não **prod_...**)."
-    if not STRIPE_PRICE_ID.startswith("price_"):
-        return False, "O STRIPE_PRICE_ID deve começar com **price_...**"
+    if miss: return False, f"Configure os segredos: {', '.join(miss)}."
+    if STRIPE_PRICE_ID.startswith("prod_"): return False, "Use um **price_...** (não **prod_...**)."
+    if not STRIPE_PRICE_ID.startswith("price_"): return False, "O STRIPE_PRICE_ID deve começar com **price_...**"
     return True, ""
 
 def inject_hotjar(hjid: int = HOTJAR_ID, hjsv: int = HOTJAR_SV):
@@ -229,67 +249,70 @@ def _boot() -> Tuple[bool, str]:
 
 ok_boot, boot_msg = _boot()
 if not ok_boot:
-    st.error(boot_msg)
-    st.stop()
+    st.error(boot_msg); st.stop()
 
 # -------------------------------------------------
-# Tela 1: clean + CTA único
+# Tela 1 — Home perfeita (alinhada e centrada)
 # -------------------------------------------------
 def first_screen():
     inject_hotjar()
-    st.markdown('<div class="page">', unsafe_allow_html=True)
-    st.markdown('<div class="hero">', unsafe_allow_html=True)
-    st.markdown(f'<span class="hero-logo">CLARA • {VERSION}</span>', unsafe_allow_html=True)
-    st.markdown('<div class="hero-title">Entenda o que você está assinando</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-hero"><div class="wrap">', unsafe_allow_html=True)
+
+    # chip + título + subtítulo
+    st.markdown(f'<span class="chip">CLARA • {VERSION}</span>', unsafe_allow_html=True)
+    st.markdown('<div class="title">Entenda o que você está assinando</div>', unsafe_allow_html=True)
     st.markdown(
         """
-        <div class="hero-sub">
-          A CLARA lê seu contrato, explica <b>em palavras simples</b> e mostra o que pode ser <b>problema</b> — como multas
-          altas, travas de cancelamento e responsabilidades exageradas.
+        <div class="subtitle">
+          A CLARA lê seu contrato, explica <b>em palavras simples</b>
+          e mostra o que pode ser <b>problema</b> — como multas altas,
+          travas de cancelamento e responsabilidades exageradas.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    if st.button("Iniciar análise do meu contrato", type="primary", use_container_width=True):
-        st.session_state.started = True
-        try: st.cache_data.clear()
-        except Exception: pass
-        try: st.cache_resource.clear()
-        except Exception: pass
-        st.rerun()
+    # CTA central real (coluna do meio)
+    st.markdown('<div class="hero-cta">', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1,1,1])
+    with c2:
+        if st.button("Iniciar análise do meu contrato", key="btn_start"):
+            st.session_state.started = True
+            try: st.cache_data.clear()
+            except Exception: pass
+            try: st.cache_resource.clear()
+            except Exception: pass
+            st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
+    # pitch alinhada
+    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
     st.markdown(
         """
         <div class="pitch">
-          <p><b>Problema real:</b> muita gente clica “li e concordo” sem entender. Isso pode custar caro.</p>
-          <p><b>Como ajudamos:</b> você envia o contrato e recebe <b>trechos críticos + explicações simples + dicas de negociação</b>.
+          <p><b>Problema real:</b> milhões de brasileiros assinam documentos sem entender por completo.
+             A frase “eu li e concordo” virou símbolo dessa crise silenciosa.
+             Isso expõe pessoas e empresas a riscos que poderiam ser evitados.</p>
+          <p><b>Como ajudamos:</b> você envia o contrato e recebe
+             <b>trechos críticos + explicações simples + dicas de negociação</b>.
              Use a CLARA como apoio para conversar com a outra parte e, se precisar, para levar ao seu advogado(a).</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        """
-        <div class="cards">
-          <div class="card">
-            <h4>🛡️ Proteção</h4>
-            <p>Detecta multas fora da realidade, travas de cancelamento e riscos escondidos.</p>
-          </div>
-          <div class="card">
-            <h4>🧩 Linguagem simples</h4>
-            <p>Traduz termos como <b>foro</b> (onde um processo acontece), <b>LGPD</b> (regras de dados) e <b>rescisão</b> (como encerrar).</p>
-          </div>
-          <div class="card">
-            <h4>📈 CET</h4>
-            <p>Mostra o custo total de um financiamento (juros + tarifas + taxas) para comparar propostas.</p>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown('</div></div>', unsafe_allow_html=True)
+    # cards de valor
+    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+    st.markdown('<div class="cards">', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="card"><h4>🛡️ Proteção</h4><p>Detecta multas fora da realidade, travas de cancelamento e riscos escondidos.</p></div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="card"><h4>🧩 Linguagem simples</h4><p>Traduz termos como <b>foro</b> (onde um processo corre), <b>LGPD</b> (regras de dados) e <b>rescisão</b> (como encerrar).</p></div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="card"><h4>📈 CET</h4><p>Mostra o custo total de um financiamento (juros + tarifas + taxas) para comparar propostas.</p></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)  # /cards
+
+    st.markdown('</div></div>', unsafe_allow_html=True)  # /wrap /page-hero
 
 # -------------------------------------------------
 # Sidebar — cadastro + admin
@@ -343,7 +366,7 @@ def sidebar_profile():
 # Preço / Stripe
 # -------------------------------------------------
 def pricing_card():
-    st.markdown('<div class="section-title">Plano Premium</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section"><div class="section-title" style="font-weight:800;">Plano Premium</div>', unsafe_allow_html=True)
     st.caption(f"{MONTHLY_PRICE_TEXT} • análises ilimitadas • suporte prioritário")
 
     okS, msgS = stripe_diagnostics()
@@ -351,25 +374,28 @@ def pricing_card():
 
     if not email:
         st.info("Preencha e salve seu **nome, e-mail e celular** na barra lateral para assinar.")
+        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     if st.button("💳 Assinar Premium agora", use_container_width=True):
         if not okS:
-            st.error(msgS); return
-        try:
-            sess = create_checkout_session(
-                price_id=STRIPE_PRICE_ID,
-                customer_email=email,
-                success_url=f"{BASE_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=f"{BASE_URL}?canceled=true",
-            )
-            if sess.get("url"):
-                st.success("Sessão criada! Clique abaixo para abrir o checkout seguro.")
-                st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
-            else:
-                st.error(sess.get("error", "Stripe indisponível no momento."))
-        except Exception as e:
-            st.error(f"Stripe indisponível no momento. Detalhe: {e}")
+            st.error(msgS)
+        else:
+            try:
+                sess = create_checkout_session(
+                    price_id=STRIPE_PRICE_ID,
+                    customer_email=email,
+                    success_url=f"{BASE_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+                    cancel_url=f"{BASE_URL}?canceled=true",
+                )
+                if sess.get("url"):
+                    st.success("Sessão criada! Clique abaixo para abrir o checkout seguro.")
+                    st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
+                else:
+                    st.error(sess.get("error", "Stripe indisponível no momento."))
+            except Exception as e:
+                st.error(f"Stripe indisponível no momento. Detalhe: {e}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def handle_checkout_result():
     qs = st.query_params
@@ -398,10 +424,10 @@ def handle_checkout_result():
         except Exception: pass
 
 # -------------------------------------------------
-# Conteúdo + preço (depois de iniciar)
+# Conteúdo + preço (após iniciar)
 # -------------------------------------------------
 def landing_block():
-    st.markdown('<div class="container-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section">', unsafe_allow_html=True)
     st.markdown("### O que você recebe")
     st.write("• Trechos críticos do contrato → **explicados em linguagem simples**.")
     st.write("• Sinais de alerta (multas altas, travas, riscos): **o que significam** e **como negociar**.")
@@ -474,8 +500,7 @@ def results_section(text: str, ctx: Dict[str, Any]):
 
     for h in hits:
         with st.expander(f"{h['severity']} • {h['title']}", expanded=False):
-            # sempre em linguagem simples
-            st.write(h["explanation"])
+            st.write(h["explanation"])               # linguagem simples
             if h.get("suggestion"):
                 st.markdown(f"**Como negociar:** {h['suggestion']}")
             if h.get("evidence"):
@@ -521,7 +546,7 @@ def main():
 
     st.markdown("---")
     st.markdown(
-        '<p class="soft">A CLARA ajuda a entender e negociar melhor, '
+        '<p class="soft">A CLARA complementa sua leitura e negociação, '
         'mas <b>não substitui</b> a orientação de um(a) advogado(a).</p>',
         unsafe_allow_html=True
     )
