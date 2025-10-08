@@ -1,6 +1,6 @@
-# app.py — CLARA • Análise de Contratos
-# Tela 1 super clean (estilo iCloud) + Tela 2 com todo o fluxo
-# Mantém: Stripe, CET, Admin, Hotjar, logs CSV, relatório, linguagem simples
+# app.py — CLARA • Análise de contratos em linguagem simples
+# Tela 1 super clean (sem preto) + Tela 2 com fluxo completo
+# Mantém: Stripe, CET, Admin, Hotjar, logs CSV, relatório, explicadores simples
 
 import os
 import io
@@ -11,7 +11,7 @@ from typing import Dict, Any, Tuple, Set, List
 
 import streamlit as st
 
-# ====== módulos locais existentes ======
+# ---- módulos locais (já existentes no seu projeto) ----
 from app_modules.pdf_utils import extract_text_from_pdf
 from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
 from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
@@ -24,7 +24,7 @@ from app_modules.storage import (
 # =========================
 APP_TITLE = "CLARA"
 SUBTITLE  = "Análise de contratos em linguagem simples"
-VERSION   = "v14.0"
+VERSION   = "v14.1"
 
 st.set_page_config(page_title=f"{APP_TITLE} • {SUBTITLE}", page_icon="🧾", layout="wide")
 
@@ -37,7 +37,7 @@ HOTJAR_ID         = st.secrets.get("HOTJAR_ID",         os.getenv("HOTJAR_ID", "
 
 MONTHLY_PRICE_TEXT = "R$ 9,90/mês"
 
-# CSVs efêmeros
+# CSVs efêmeros (em disco temporário)
 VISITS_CSV    = Path("/tmp/visitas.csv")
 CONSULTAS_CSV = Path("/tmp/consultas.csv")
 
@@ -51,7 +51,7 @@ if "premium" not in st.session_state:
 if "free_runs_left" not in st.session_state:
     st.session_state.free_runs_left = 1
 if "started" not in st.session_state:
-    st.session_state.started = False  # controla Tela 1 -> Tela 2
+    st.session_state.started = False  # controla a transição Tela 1 -> Tela 2
 
 # =========================
 # Boot (Stripe + DB)
@@ -169,25 +169,25 @@ if HOTJAR_ID:
     )
 
 # =========================
-# Estilos (Tela 1 e geral)
+# Estilos (clean, sem preto)
 # =========================
 BASE_CSS = """
 <style>
   html, body, [class^="css"]  { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
   .hero {
-    min-height: 68vh; display:flex; align-items:center; justify-content:center; flex-direction:column;
+    min-height: 70vh; display:flex; align-items:center; justify-content:center; flex-direction:column;
     text-align:center; padding: 0 16px;
   }
-  .hero-title { font-size: 76px; font-weight: 800; letter-spacing: -1px; margin: 8px 0 4px 0; }
-  .hero-sub   { font-size: 18px; color:#6b7280; margin-top: 4px; max-width: 720px; }
+  .hero-title { font-size: 72px; font-weight: 800; letter-spacing: -0.5px; margin: 8px 0 4px 0; }
+  .hero-sub   { font-size: 18px; color:#667085; margin-top: 6px; max-width: 860px; }
   .cta-big {
-    display:inline-block; margin-top:24px; padding:16px 28px; border-radius:999px; font-weight:700;
-    background:#111; color:#fff; text-decoration:none; border:1px solid #111; font-size:18px;
+    display:inline-block; margin-top:22px; padding:14px 26px; border-radius:999px; font-weight:700;
+    background: linear-gradient(90deg, #2563eb 0%, #3b82f6 100%); color:#fff; text-decoration:none; border:0; font-size:18px;
   }
-  .cta-big:hover { filter: brightness(0.96); }
+  .cta-big:hover { filter: brightness(0.97); }
   .muted { color:#6b7280; }
+  .footnote { font-size:13px; color:#6e7480; max-width: 980px; }
   .pill-card { border:1px solid #edf1f7; border-radius:14px; padding:18px; background:#fff; }
-  .footnote { font-size:12.5px; color:#6e7480; }
 </style>
 """
 st.markdown(BASE_CSS, unsafe_allow_html=True)
@@ -199,8 +199,7 @@ else:
     st.markdown("<style>[data-testid='stSidebar']{display:block;}</style>", unsafe_allow_html=True)
 
 # =========================
-# Sidebar – Perfil + Admin
-# (só aparece após clicar em “Iniciar”)
+# Sidebar – Perfil + Admin (apenas depois de iniciar)
 # =========================
 def sidebar_profile():
     st.sidebar.header("🔐 Seus dados (obrigatório)")
@@ -255,40 +254,48 @@ def sidebar_profile():
             st.sidebar.error(f"Visitas: {e}")
 
 # =========================
-# Tela 1 — Super clean
+# Tela 1 — Super clean (mensagem do problema + 1 botão)
 # =========================
 def first_screen():
-    st.write("")  # remove padding top
+    st.write("")
     st.markdown(
-        """
+        f"""
         <div class="hero">
-          <div class="hero-title">CLARA</div>
+          <div class="hero-title">{APP_TITLE}</div>
           <div class="hero-sub">
-            Entenda seu contrato em linguagem simples. A CLARA encontra riscos, traduz juridiquês
-            e sugere caminhos de negociação — rápido e direto ao ponto.
+            Entenda seu contrato em linguagem simples. A CLARA encontra riscos, traduz juridiquês e
+            sugere caminhos de negociação — rápido e direto ao ponto.
           </div>
-          <a class="cta-big" href="#" id="ctaStart">Iniciar análise do meu contrato</a>
-          <p class="footnote" style="margin-top:28px;">
-            “Eu li e concordo” virou quase automático no Brasil — e isso expõe empresas a riscos evitáveis.
-            Aqui você ganha clareza antes de assinar.
-          </p>
+          <div style="margin-top:24px;">
+            <form method="post">
+              <button class="cta-big" name="start" type="submit">Iniciar análise do meu contrato</button>
+            </form>
+          </div>
+          <div class="footnote" style="margin-top:28px; text-align:justify;">
+            <p><b>Milhões de brasileiros</b> assinam documentos legais sem entender completamente o que estão aceitando,
+            colocando seus negócios e patrimônio em risco desnecessário.</p>
+            <p>A frase <i>“Eu li e concordo com os termos e condições”</i> virou símbolo dessa crise silenciosa no Brasil.
+            Muitos empresários negligenciam a importância de compreender profundamente o que assinam, expondo suas empresas
+            a vulnerabilidades que poderiam ser evitadas com mais clareza.</p>
+          </div>
         </div>
-        <script>
-          const btn = document.getElementById('ctaStart');
-          if(btn){ btn.addEventListener('click', () => { window.parent.postMessage({isStart:true}, '*'); }); }
-        </script>
         """,
         unsafe_allow_html=True,
     )
 
-    # Captura o clique do botão (postMessage) e liga a flag started
-    st.experimental_memo.clear()  # no-op só para garantir refresh limpo
-    msg = st.experimental_get_query_params()  # fallback se vier com query
-    # Listener JS -> Python:
-    st.session_state.started = st.session_state.get("started", False)
+    # Botão server-side (sem JS) — robusto
+    if st.session_state.get("_start_clicked", False):
+        st.session_state.started = True
+        st.session_state["_start_clicked"] = False
+        st.experimental_rerun()
 
-    # Botão redundante (servidor), caso JS seja bloqueado
-    if st.button("Iniciar análise do meu contrato", use_container_width=True):
+    # Detecta submit do <form> (via query & workaround)
+    if st.runtime.exists():  # compat
+        # Streamlit não tem hook direto do <form>, então usamos um botão abaixo para garantir
+        pass
+
+    # Botão redundante visível (caso o <form> seja bloqueado por CSP)
+    if st.button("Iniciar agora", use_container_width=True):
         st.session_state.started = True
         st.experimental_rerun()
 
@@ -385,7 +392,7 @@ def cet_calculator_block():
 def legal_explainers_block():
     with st.expander("📚 Explicações rápidas (jurídico em linguagem simples)", expanded=False):
         st.markdown("**Foro** → é a cidade/tribunal onde um processo corre. Se for longe, fica caro se defender.")
-        st.markdown("**LGPD** → regras sobre como seus dados são coletados/usados: por quê, por quanto tempo, e por quem.")
+        st.markdown("**LGPD** → regras sobre seus dados: por quê são coletados, por quanto tempo e por quem.")
         st.markdown("**Rescisão** → como encerrar: prazos, multas, devoluções e se existe um **teto** para penalidades.")
         st.markdown("**Responsabilidade** → sem limite claro, você pode ficar exposto a valores muito altos.")
         st.markdown("**Reajuste** → quando e como o preço muda (índice, periodicidade, aviso).")
@@ -453,7 +460,7 @@ def results_section(text: str, ctx: Dict[str, Any]):
 def main():
     handle_checkout_result()
 
-    # TELA 1
+    # TELA 1 (clean)
     if not st.session_state.started:
         first_screen()
         return
@@ -461,7 +468,6 @@ def main():
     # TELA 2 – fluxo completo
     sidebar_profile()
 
-    # Cabeçalho discreto
     st.caption(f"{APP_TITLE} • {SUBTITLE} • {VERSION}")
 
     col1, col2 = st.columns([3,2])
@@ -475,16 +481,10 @@ def main():
 
     st.markdown("---")
     st.markdown(
-        "<p class='footnote'>A CLARA é um apoio para você preparar a negociação e "
-        "entender riscos. Para decisões finais, conte também com um(a) advogado(a).</p>",
+        "<p class='footnote'>A CLARA complementa a sua leitura e prepara a negociação. "
+        "Para decisões finais, conte também com um(a) advogado(a).</p>",
         unsafe_allow_html=True,
     )
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
