@@ -1,8 +1,10 @@
-# app.py — CLARA • Análise de Contratos
+# app.py — CLARA • Análise de Contratos (single‑page, UX refinada)
 # Home clean & alinhada + linguagem simples + Stripe + CET + logs CSV + Hotjar + Admin
+# Mantém TODAS as funcionalidades e incorpora o feedback do usuário
 
 import os
 import io
+import re
 import csv
 from pathlib import Path
 from datetime import datetime
@@ -26,7 +28,7 @@ from app_modules.storage import (
 # Configs
 # -------------------------------------------------
 APP_TITLE = "CLARA • Análise de Contratos"
-VERSION = "v14.1"
+VERSION = "v15.0"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
@@ -57,59 +59,37 @@ st.markdown(
         --brand:#4f46e5; --brand2:#6366f1; --bg:#f8fafc; --card:#ffffff;
       }
 
-      /* plano de fundo suave da home */
       .page-hero{
         background:
           radial-gradient(1200px 500px at 50% -150px, #eef2ff 20%, #fff 60%, #fff 100%);
         padding: 32px 0 6px;
       }
+      .wrap{ max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+      .chip{ display:inline-block; padding:6px 12px; border-radius:999px;
+        background:#eef2ff; border:1px solid #e0e7ff; color:#334155; font-weight:600; font-size:12.5px; }
+      .title{ margin: 18px 0 8px; font-size: clamp(34px, 6vw, 58px);
+        font-weight: 800; color: var(--text); letter-spacing:.3px; line-height:1.06; }
+      .subtitle{ max-width: 900px; font-size: 19px; line-height: 1.7; color: var(--muted); margin: 0 0 18px; }
 
-      /* largura máxima e alinhamento central */
-      .wrap{
-        max-width: 1120px;
-        margin: 0 auto;
-        padding: 0 24px;
-      }
-
-      .chip{
-        display:inline-block; padding:6px 12px; border-radius:999px;
-        background:#eef2ff; border:1px solid #e0e7ff; color:#334155; font-weight:600; font-size:12.5px;
-      }
-
-      .title{
-        margin: 18px 0 8px; font-size: clamp(34px, 6vw, 58px);
-        font-weight: 800; color: var(--text); letter-spacing:.3px; line-height:1.06;
-      }
-
-      .subtitle{
-        max-width: 900px; font-size: 19px; line-height: 1.7; color: var(--muted);
-        margin: 0 0 18px;
-      }
-
-      /* centraliza o botão apenas na seção hero */
       .hero-cta .stButton > button{
         background: linear-gradient(90deg, var(--brand), var(--brand2));
         color: #fff; border: 0; border-radius: 14px; padding: 14px 22px;
         font-weight: 700; font-size: 17px; box-shadow: 0 8px 24px rgba(79,70,229,.18);
       }
-      .hero-cta .stButton > button:hover{
-        filter: brightness(1.03);
-      }
+      .hero-cta .stButton > button:hover{ filter: brightness(1.03); }
 
       .pitch{ color:var(--muted); line-height:1.75; font-size:16px; }
 
-      /* cards de valor */
       .cards{ display:grid; gap:16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
       @media (max-width: 980px){ .cards{ grid-template-columns: 1fr; } }
-      .card{
-        background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px;
-      }
-      .card h4{ margin:4px 0 6px; font-size:18px; color:var(--text);}
-      .card p{ margin:0; color:var(--muted); font-size:15.5px;}
+      .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
+      .card h4{ margin:4px 0 6px; font-size:18px; color:var(--text);} .card p{ margin:0; color:var(--muted); font-size:15.5px;}
 
       .section{ background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px; }
-
       .soft{ font-size:13px; color:#64748b; }
+
+      /* evita scroll horizontal em expander */
+      .no-overflow div[role="region"]{ overflow-x: hidden !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -128,8 +108,11 @@ if "free_runs_left" not in st.session_state:
     st.session_state.free_runs_left = 1
 
 # -------------------------------------------------
-# Utils / Admin
+# Utils / Admin / Validações
 # -------------------------------------------------
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+PHONE_RE = re.compile(r"^\+?\d{10,15}$")
+
 def _parse_admin_emails() -> Set[str]:
     raw = st.secrets.get("admin_emails", None)
     if raw is None:
@@ -145,9 +128,12 @@ ADMIN_EMAILS = _parse_admin_emails()
 def current_email() -> str:
     return (st.session_state.profile.get("email") or "").strip().lower()
 
-def require_profile() -> bool:
-    p = st.session_state.profile
-    return bool((p.get("nome") or "").strip() and (p.get("email") or "").strip() and (p.get("cel") or "").strip())
+def is_valid_email(v: str) -> bool:
+    return bool(EMAIL_RE.match((v or "").strip()))
+
+def is_valid_phone(v: str) -> bool:
+    digits = re.sub(r"\D", "", v or "")
+    return bool(PHONE_RE.match(digits))
 
 def is_premium() -> bool:
     if st.session_state.premium:
@@ -254,6 +240,7 @@ if not ok_boot:
 # -------------------------------------------------
 # Tela 1 — Home perfeita (alinhada e centrada)
 # -------------------------------------------------
+
 def first_screen():
     inject_hotjar()
     st.markdown('<div class="page-hero"><div class="wrap">', unsafe_allow_html=True)
@@ -315,26 +302,35 @@ def first_screen():
     st.markdown('</div></div>', unsafe_allow_html=True)  # /wrap /page-hero
 
 # -------------------------------------------------
-# Sidebar — cadastro + admin
+# Sidebar — cadastro (opcional) + admin
 # -------------------------------------------------
+
 def sidebar_profile():
-    st.sidebar.header("🔐 Seus dados (obrigatório)")
-    nome  = st.sidebar.text_input("Nome completo*", value=st.session_state.profile.get("nome",""))
-    email = st.sidebar.text_input("E-mail*",        value=st.session_state.profile.get("email",""))
-    cel   = st.sidebar.text_input("Celular*",       value=st.session_state.profile.get("cel",""))
-    papel = st.sidebar.selectbox("Você é o contratante?*", ["Contratante","Contratado","Outro"],
+    st.sidebar.header("👤 Seus dados (opcional)")
+    nome  = st.sidebar.text_input("Nome completo", value=st.session_state.profile.get("nome",""))
+    email = st.sidebar.text_input("E-mail",        value=st.session_state.profile.get("email",""))
+    cel   = st.sidebar.text_input("Celular",       value=st.session_state.profile.get("cel",""))
+    papel = st.sidebar.selectbox("Você é o contratante?", ["Contratante","Contratado","Outro"],
                                  index=["Contratante","Contratado","Outro"].index(st.session_state.profile.get("papel","Contratante")))
 
-    if st.sidebar.button("Salvar perfil", use_container_width=True):
-        st.session_state.profile = {"nome":nome.strip(),"email":email.strip(),"cel":cel.strip(),"papel":papel}
-        try: log_visit(email.strip())
-        except Exception: pass
-        try:
-            if current_email() and get_subscriber_by_email(current_email()):
-                st.session_state.premium = True
-        except Exception:
-            pass
-        st.sidebar.success("Dados salvos!")
+    if st.sidebar.button("Salvar dados", use_container_width=True):
+        errors = []
+        if email and not is_valid_email(email):
+            errors.append("E-mail inválido.")
+        if cel and not is_valid_phone(cel):
+            errors.append("Celular inválido (use somente números, com DDD).")
+        if errors:
+            st.sidebar.error(" • ".join(errors))
+        else:
+            st.session_state.profile = {"nome":nome.strip(),"email":email.strip(),"cel":cel.strip(),"papel":papel}
+            try: log_visit(email.strip())
+            except Exception: pass
+            try:
+                if current_email() and get_subscriber_by_email(current_email()):
+                    st.session_state.premium = True
+            except Exception:
+                pass
+            st.sidebar.success("Dados salvos!")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("Administração")
@@ -363,8 +359,9 @@ def sidebar_profile():
                 serve_csv_downloads()
 
 # -------------------------------------------------
-# Preço / Stripe
+# Preço / Stripe (banner discreto)
 # -------------------------------------------------
+
 def pricing_card():
     st.markdown('<div class="section"><div class="section-title" style="font-weight:800;">Plano Premium</div>', unsafe_allow_html=True)
     st.caption(f"{MONTHLY_PRICE_TEXT} • análises ilimitadas • suporte prioritário")
@@ -373,7 +370,7 @@ def pricing_card():
     email = current_email()
 
     if not email:
-        st.info("Preencha e salve seu **nome, e-mail e celular** na barra lateral para assinar.")
+        st.info("Preencha e salve seu e-mail na barra lateral para assinar. A análise gratuita continua liberada sem cadastro.")
         st.markdown('</div>', unsafe_allow_html=True)
         return
 
@@ -396,6 +393,7 @@ def pricing_card():
             except Exception as e:
                 st.error(f"Stripe indisponível no momento. Detalhe: {e}")
     st.markdown('</div>', unsafe_allow_html=True)
+
 
 def handle_checkout_result():
     qs = st.query_params
@@ -426,6 +424,7 @@ def handle_checkout_result():
 # -------------------------------------------------
 # Conteúdo + preço (após iniciar)
 # -------------------------------------------------
+
 def landing_block():
     st.markdown('<div class="section">', unsafe_allow_html=True)
     st.markdown("### O que você recebe")
@@ -440,6 +439,7 @@ def landing_block():
 # -------------------------------------------------
 # Upload / Inputs / CET / Resultado
 # -------------------------------------------------
+
 def upload_or_paste_section() -> str:
     st.subheader("1) Envie o contrato")
     f = st.file_uploader("PDF do contrato", type=["pdf"])
@@ -451,6 +451,7 @@ def upload_or_paste_section() -> str:
     raw = st.text_area("Texto do contrato", height=220, value=raw or "")
     return raw
 
+
 def analysis_inputs() -> Dict[str, Any]:
     st.subheader("2) Contexto")
     c1,c2,c3 = st.columns(3)
@@ -458,6 +459,7 @@ def analysis_inputs() -> Dict[str, Any]:
     papel = c2.selectbox("Perfil", ["Contratante","Contratado","Outro"])
     valor = c3.number_input("Valor máx. (opcional)", min_value=0.0, step=100.0)
     return {"setor":setor, "papel":papel, "limite_valor":valor}
+
 
 def cet_calculator_block():
     with st.expander("📈 Calculadora de CET (opcional)", expanded=False):
@@ -470,16 +472,38 @@ def cet_calculator_block():
             cet = compute_cet_quick(P, i_m/100.0, int(n), fee)
             st.success(f"**CET aproximado:** {cet*100:.2f}% ao mês")
 
+
+def _wrap_text_box(label: str, content: str, h: int = 160):
+    """Exibe texto sem scroll horizontal (caixa fixa e somente vertical)."""
+    st.text_area(label, value=content, height=h, disabled=True)
+
+
+def _build_share_email(resumo: str) -> str:
+    return f"""Assunto: Solicitação de revisão de cláusulas contratuais
+
+Olá,
+
+Envio, por gentileza, os principais pontos identificados na análise inicial do contrato:
+
+- {resumo}
+
+Poderia avaliar as cláusulas destacadas (multas, reajuste, foro e responsabilidades) e sugerir eventuais ajustes de redação para mitigar riscos?
+
+Fico à disposição.
+
+Atenciosamente,
+{st.session_state.profile.get('nome') or '—'}
+"""
+
+
 def results_section(text: str, ctx: Dict[str, Any]):
     st.subheader("4) Resultado")
 
-    if not require_profile():
-        st.info("Preencha e salve **nome, e-mail e celular** na barra lateral para liberar a análise.")
-        return
     if not text.strip():
         st.warning("Envie o contrato (PDF) ou cole o texto para analisar.")
         return
 
+    # Análise gratuita SEM obrigar cadastro
     if not is_premium() and st.session_state.free_runs_left <= 0:
         st.info("Você usou sua análise gratuita. **Assine o Premium** para continuar.")
         return
@@ -490,68 +514,90 @@ def results_section(text: str, ctx: Dict[str, Any]):
     if not is_premium():
         st.session_state.free_runs_left -= 1
 
-    email = current_email()
-    log_analysis_event(email=email, meta={"setor":ctx["setor"], "papel":ctx["papel"], "len":len(text)})
+    # logs
+    email_for_log = current_email()  # pode estar vazio (grátis sem cadastro)
+    log_analysis_event(email=email_for_log, meta={"setor":ctx["setor"], "papel":ctx["papel"], "len":len(text)})
     log_consultation({"setor":ctx["setor"], "valor_max":ctx["limite_valor"], "texto_len":len(text)})
 
     resume = summarize_hits(hits)
     st.success(f"Resumo: {resume['resumo']}")
     st.write(f"Gravidade: **{resume['gravidade']}** | Pontos críticos: **{resume['criticos']}** | Itens analisados: {len(hits)}")
 
+    # Pontos
+    st.markdown("<div class='no-overflow'>", unsafe_allow_html=True)
     for h in hits:
         with st.expander(f"{h['severity']} • {h['title']}", expanded=False):
-            st.write(h["explanation"])               # linguagem simples
+            st.write(h.get("explanation", ""))               # linguagem simples
             if h.get("suggestion"):
                 st.markdown(f"**Como negociar:** {h['suggestion']}")
             if h.get("evidence"):
-                st.code(h["evidence"][:1200])
+                # Evita scroll horizontal: caixa de texto somente leitura
+                _wrap_text_box("Trecho do contrato (referência)", h["evidence"][:800])
+    st.markdown("</div>", unsafe_allow_html=True)
 
     cet_calculator_block()
 
     # Relatório .txt
     buff = io.StringIO()
     buff.write(f"{APP_TITLE} {VERSION}\n")
-    buff.write(f"Usuário: {st.session_state.profile.get('nome')} <{email}>  •  Papel: {ctx['papel']}\n")
+    buff.write(f"Usuário: {st.session_state.profile.get('nome','')} <{email_for_log or 'sem e-mail'}>  •  Papel: {ctx['papel']}\n")
     buff.write(f"Setor: {ctx['setor']}  |  Valor máx.: {ctx['limite_valor']}\n\n")
     buff.write(f"Resumo: {resume['resumo']} (Gravidade: {resume['gravidade']})\n\n")
     buff.write("Pontos de atenção:\n")
     for h in hits:
-        buff.write(f"- [{h['severity']}] {h['title']} — {h['explanation']}\n")
+        buff.write(f"- [{h['severity']}] {h['title']} — {h.get('explanation','')}\n")
         if h.get("suggestion"):
             buff.write(f"  Como negociar: {h['suggestion']}\n")
-    st.download_button("📥 Baixar relatório (txt)", data=buff.getvalue(),
-                       file_name="relatorio_clara.txt", mime="text/plain")
+    st.download_button("📥 Baixar relatório (txt)", data=buff.getvalue(), file_name="relatorio_clara.txt", mime="text/plain")
+
+    # Botão para gerar e-mail (copiar/baixar)
+    st.markdown("### Gerar e-mail para advogado/contraparte")
+    email_text = _build_share_email(resume.get('resumo', ''))
+    st.text_area("Copie e cole:", email_text, height=220)
+    st.download_button("Baixar e-mail (.txt)", data=email_text.encode("utf-8"), file_name="email_para_advogado.txt", mime="text/plain")
+
+    # Ações auxiliares
+    colA, colB = st.columns(2)
+    with colA:
+        if st.button("🔄 Recomeçar (voltar ao início)"):
+            st.session_state.started = False
+            st.rerun()
+    with colB:
+        st.caption("Dica: preencha seus dados na barra lateral para salvar histórico e assinar o Premium, se quiser.")
 
 # -------------------------------------------------
-# Main
+# Main (single page)
 # -------------------------------------------------
+
 def main():
     if not st.session_state.started:
         first_screen()
         return
 
+    # Barra lateral sempre visível
     sidebar_profile()
     handle_checkout_result()
     landing_block()
 
     st.markdown("---")
     st.markdown("### Comece sua análise")
-    st.caption("Preencha seus dados na barra lateral e envie o contrato.")
+    st.caption("Envie o contrato. O cadastro é opcional para a análise gratuita.")
 
     texto = upload_or_paste_section()
     ctx   = analysis_inputs()
 
-    if st.button("🚀 Começar análise", use_container_width=True):
+    if st.button("🚀 Analisar agora", use_container_width=True):
         results_section(texto, ctx)
 
     st.markdown("---")
+    # Banner Premium também no rodapé (discreto)
+    with st.container():
+        st.info("🔓 Clara Premium (opcional): relatórios ilimitados, histórico e suporte prioritário. A análise gratuita continua disponível.")
+
     st.markdown(
-        '<p class="soft">A CLARA complementa sua leitura e negociação, '
-        'mas <b>não substitui</b> a orientação de um(a) advogado(a).</p>',
+        '<p class="soft">A CLARA complementa sua leitura e negociação, mas <b>não substitui</b> a orientação de um(a) advogado(a).</p>',
         unsafe_allow_html=True
     )
 
 if __name__ == "__main__":
     main()
-
-
