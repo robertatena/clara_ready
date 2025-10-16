@@ -322,14 +322,12 @@ if nav == "Início":
     st.markdown(
         """
         <style>
-            .hero{padding:28px 22px;border-radius:16px;background:linear-gradient(135deg,#f7f7fb, #eef6ff);border:1px solid rgba(0,0,0,.06);}
+            .hero{padding:28px 22px;border-radius:16px;background:linear-gradient(135deg,#f7f7fb,#eef6ff);border:1px solid rgba(0,0,0,.06);}
             .hero h1{margin:0 0 8px 0; font-size: 2.0rem;}
             .hero p{margin:0; font-size:1.02rem; color:#333}
-            .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#fff;border:1px solid rgba(0,0,0,.08);font-size:.84rem;color:#444;margin-right:8px;margin-top:8px}
-            .callout{border-left:4px solid #2e6bff;background:#f2f6ff;padding:14px 16px;border-radius:8px}
             .card{border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:14px;background:#fff}
         </style>
-        <div class="hero">
+        <div class=\"hero\">
             <h1>Clara — análise inteligente de contratos</h1>
             <p>Envie um PDF ou foto e receba, em segundos, um resumo claro com pontos de atenção e, quando fizer sentido, a estimativa de CET.</p>
         </div>
@@ -337,15 +335,12 @@ if nav == "Início":
         unsafe_allow_html=True,
     )
 
-    st.markdown("
-")
-
     # Copy solicitada — crise silenciosa
     st.markdown(
         """
-        **A frase “Eu li e concordo com os termos e condições” virou símbolo de uma crise silenciosa no Brasil.** 
-        Empresários frequentemente **negligenciam a leitura profunda** dos contratos que assinam e isso os expõe a **vulnerabilidades evitáveis**. 
-        Milhões de brasileiros firmam documentos legais **sem entender completamente** o que estão aceitando — colocando **negócios e patrimônio em risco desnecessário**. 
+        **A frase “Eu li e concordo com os termos e condições” virou símbolo de uma crise silenciosa no Brasil.**
+        Empresários frequentemente **negligenciam a leitura profunda** dos contratos que assinam e isso os expõe a **vulnerabilidades evitáveis**.
+        Milhões de brasileiros firmam documentos legais **sem entender completamente** o que estão aceitando — colocando **negócios e patrimônio em risco desnecessário**.
         A **Clara** nasceu para reduzir esse risco: transformar contratos em **informação compreensível**, com os alertas certos, antes da decisão.
         """
     )
@@ -354,15 +349,15 @@ if nav == "Início":
     colh1, colh2, colh3 = st.columns(3)
     with colh1:
         st.markdown("""
-        <div class="card"><strong>Leitura rápida</strong><br/>Extrai o texto do PDF ou foto (OCR automático) e identifica cláusulas sensíveis.</div>
+        <div class=\"card\"><strong>Leitura rápida</strong><br/>Extrai o texto do PDF ou foto (OCR automático) e identifica cláusulas sensíveis.</div>
         """, unsafe_allow_html=True)
     with colh2:
         st.markdown("""
-        <div class="card"><strong>Transparência</strong><br/>Mostra os <em>trechos</em> que embasam cada ponto de atenção em linguagem simples.</div>
+        <div class=\"card\"><strong>Transparência</strong><br/>Mostra os <em>trechos</em> que embasam cada ponto de atenção em linguagem simples.</div>
         """, unsafe_allow_html=True)
     with colh3:
         st.markdown("""
-        <div class="card"><strong>CET em segundos</strong><br/>Para contratos de crédito, estimamos rapidamente o CET quando aplicável.</div>
+        <div class=\"card\"><strong>CET em segundos</strong><br/>Para contratos de crédito, estimamos rapidamente o CET quando aplicável.</div>
         """, unsafe_allow_html=True)
 
     st.markdown("### Como usar")
@@ -609,6 +604,7 @@ with st.expander("Privacidade"):
 # - Este arquivo preserva as assinaturas das funções importadas de app_modules/* para manter compatibilidade.
 #
 # Fim do app.py v15
+
 
 
 
