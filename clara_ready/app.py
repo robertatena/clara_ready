@@ -213,6 +213,9 @@ VISIT_HEADERS = [
     "referrer",
     "user_agent",
     "file_name",
+    "name",
+    "email",
+    "phone",
 ]
 
 ensure_csv_headers(VISITS_CSV, VISIT_HEADERS)
@@ -243,7 +246,7 @@ def log_visit_event(name: str, extra: Optional[Dict[str, str]] = None):
     row.update({k: safe_str(v) for k, v in extra.items() if k not in row})
     try:
         with VISITS_CSV.open("a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=VISIT_HEADERS)
+            writer = csv.DictWriter(f, fieldnames=VISIT_HEADERS, extrasaction='ignore')
             writer.writerow(row)
     except Exception as e:
         # streamlit não tem st.debug; usamos print silencioso para logs de servidor
@@ -279,7 +282,8 @@ def ocr_bytes(data: bytes) -> str:
         texts: List[str] = []
         for pg in pages:
             texts.append(pytesseract.image_to_string(pg, lang="por+eng"))
-        return "\n".join(texts)
+        return "
+".join(texts)
     except Exception:
         return ""
 
@@ -316,7 +320,8 @@ def robust_extract_text(data: bytes) -> str:
                     chunks.append(page.extract_text() or "")
                 except Exception:
                     pass
-            txt = "\n".join(chunks)
+            txt = "
+".join(chunks)
             if txt and len(txt.strip()) > 50:
                 return txt
         except Exception:
@@ -477,15 +482,26 @@ if uploaded is not None:
 
     # Configurações rápidas
     st.markdown("### 2) Preferências de análise")
-    colA, colB, colC = st.columns(3)
-    with colA:
-        lang_pt = st.checkbox("Análise em Português", value=True)
-    with colB:
-        want_summary = st.checkbox("Resumo amigável", value=True)
-    with colC:
-        calc_cet = st.checkbox("Estimar CET (se aplicável)", value=True)
+colA, colB, colC = st.columns(3)
+with colA:
+    lang_pt = st.checkbox("Análise em Português", value=True)
+with colB:
+    want_summary = st.checkbox("Resumo amigável", value=True)
+with colC:
+    calc_cet = st.checkbox("Estimar CET (se aplicável)", value=True)
 
-    if st.button("🔎 Analisar agora", type="primary"):
+st.markdown("### 3) Seus dados (para enviarmos o relatório)")
+colN1, colN2 = st.columns(2)
+with colN1:
+    user_name = st.text_input("Nome completo*")
+    user_phone = st.text_input("Celular (WhatsApp)*")
+with colN2:
+    user_email = st.text_input("E-mail*")
+    company = st.text_input("Empresa (opcional)")
+
+st.caption("Usamos esses dados apenas para enviar seu relatório e contato de suporte.")
+
+if st.button("🔎 Analisar agora", type="primary"):
         with st.status("Lendo e analisando o contrato…", expanded=True) as status:
             status.write("Extraindo texto…")
             data = uploaded.read()
@@ -507,7 +523,7 @@ if uploaded is not None:
             else:
                 status.write("Rodando análise semântica…")
                 try:
-                    hits = analyze_contract_text(text, lang="pt" if lang_pt else "en")
+                    hits = analyze_contract_text(text)
                 except Exception as e:
                     st.error(f"Falha na análise: {e}")
                     status.update(label="Análise falhou", state="error")
@@ -515,7 +531,7 @@ if uploaded is not None:
 
                 if hits is not None:
                     status.write("Gerando resumo…")
-                    summary = summarize_hits(hits, lang="pt" if lang_pt else "en") if want_summary else None
+                    summary = summarize_hits(hits) if want_summary else None
 
                     cet_block = None
                     if calc_cet:
@@ -526,7 +542,7 @@ if uploaded is not None:
 
                     # Loga evento de análise concluída
                     log_analysis_event(get_session_id(), uploaded.name, len(text))
-                    log_visit_event("AnalysisCompleted", {"file_name": uploaded.name})
+                    log_visit_event("AnalysisCompleted", {"file_name": uploaded.name, "name": user_name, "email": user_email, "phone": user_phone})
                     ttq_track("AnalysisCompleted", {"value": 1})
 
                     status.update(label="Análise concluída", state="complete")
