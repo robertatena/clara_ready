@@ -1,14 +1,6 @@
-# app.py — CLARA • Análise de Contratos (v16)
-# "Mobile-first, leitura robusta, medição limpa e duas páginas"
+# app.py — CLARA • Análise de Contratos (v19)
+# Single-file com 2 páginas (Início + Analisar), leitura robusta e estética profissional
 # ----------------------------------------------------------------------------
-# Destaques:
-# 1) Duas páginas: Landing (Início) e Analisar, com visual profissional
-# 2) Extração robusta: pdf_utils -> pypdf -> arquivo temporário -> docx2txt -> OCR
-# 3) Métricas: TikTok (PageView/FileUpload/AnalysisCompleted) + Hotjar + CSV visits
-# 4) Stripe: init com 1 argumento (compatível), checkout, e fallback seguro
-# 5) UX: CTA, validação (nome/email/celular/arquivo), status de progresso, preview do texto
-# 6) Admin: funil (PageViews, Uploads, Análises, Leads) + tabela de visitas
-
 from __future__ import annotations
 
 import os
@@ -25,20 +17,18 @@ import streamlit as st
 # ---- módulos locais (mantêm sua estrutura) ----
 from app_modules.pdf_utils import extract_text_from_pdf
 from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
-from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
+from app_modules.stripe_utils import init_stripe, create_checkout_session
 from app_modules.storage import (
-    init_db,
     log_analysis_event,
     log_subscriber,
     list_subscribers,
-    get_subscriber_by_email,
 )
 
 # ----------------------------------------------------------------------------
 # Configurações
 # ----------------------------------------------------------------------------
 APP_TITLE = "CLARA • Análise de Contratos"
-VERSION = "v16"
+VERSION = "v19"
 
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
@@ -47,37 +37,28 @@ STRIPE_PUBLIC_KEY = st.secrets.get("STRIPE_PUBLIC_KEY", "")
 STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", "")
 PRICING_PRODUCT_ID = st.secrets.get("STRIPE_PRICE_ID", "price_xxx")
 
-TIKTOK_PIXEL_ID = st.secrets.get("TIKTOK_PIXEL_ID", "")  # ex.: TT-XXXXXXX
+TIKTOK_PIXEL_ID = st.secrets.get("TIKTOK_PIXEL_ID", "")
 HOTJAR_ID = st.secrets.get("HOTJAR_ID", "")
 HOTJAR_SV = st.secrets.get("HOTJAR_SV", "6")
 
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR = Path("data"); DATA_DIR.mkdir(exist_ok=True)
 VISITS_CSV = DATA_DIR / "visits.csv"
 
 # ----------------------------------------------------------------------------
-# Estilos globais (limpos e profissionais)
+# Estilos globais
 # ----------------------------------------------------------------------------
 st.markdown(
     """
 <style>
-  .block-container { padding-top: 0.8rem; }
+  .block-container { padding-top: .8rem; }
   .stButton>button { border-radius: 12px; padding: 0.65rem 1rem; font-weight: 600; }
-  .hero{
-    padding:32px 22px; border-radius:20px;
-    background:linear-gradient(135deg,#f7f7fb 0%, #eef6ff 100%);
-    border:1px solid rgba(0,0,0,.06);
-    position: relative; overflow:hidden;
-  }
-  .hero h1{margin:0 0 8px 0; font-size: 2.1rem;}
+  .hero{padding:32px 22px; border-radius:20px; background:linear-gradient(135deg,#f7f7fb,#eef6ff); border:1px solid rgba(0,0,0,.06); position:relative; overflow:hidden}
+  .hero h1{margin:0 0 8px 0; font-size:2.1rem}
   .hero p{margin:0; font-size:1.05rem; color:#333}
-  .hero .svgwrap{position:absolute; right:-40px; bottom:-40px; opacity:.4}
-  .card{
-    border:1px solid rgba(0,0,0,.08); border-radius:16px; padding:16px; background:#fff;
-    box-shadow: 0 1px 0 rgba(0,0,0,0.02);
-  }
-  .muted{color:#555}
-  footer.clara {margin-top:48px;padding:16px;border-top:1px solid rgba(0,0,0,.06);color:#555}
+  .cards{ display:grid; gap:16px; grid-template-columns: repeat(3, minmax(0,1fr)); margin-top: 8px }
+  @media (max-width:980px){ .cards{ grid-template-columns: 1fr } }
+  .card{ background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:16px; box-shadow: 0 1px 0 rgba(0,0,0,0.02) }
+  footer.clara { margin-top:48px; padding:16px; border-top:1px solid #e5e7eb; color:#555 }
 </style>
 """,
     unsafe_allow_html=True,
@@ -92,8 +73,7 @@ def now_iso() -> str:
 def ensure_csv_headers(path: Path, headers: List[str]):
     if not path.exists():
         with path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
+            csv.writer(f).writerow(headers)
 
 def safe_str(x: Any) -> str:
     try:
@@ -102,67 +82,66 @@ def safe_str(x: Any) -> str:
         return ""
 
 # ----------------------------------------------------------------------------
-# Pixels: Hotjar e TikTok
+# Pixels: Hotjar & TikTok
 # ----------------------------------------------------------------------------
 def inject_hotjar(hjid: str, hjsv: str = "6"):
     if not hjid:
         return
-    snippet = f"""
-    <script>
-      (function(h,o,t,j,a,r){{
-          h.hj=h.hj||function(){{(h.hj.q=h.hj.q||[]).push(arguments)}};
-          h._hjSettings={{hjid:{hjid},hjsv:{hjsv}}};
-          a=o.getElementsByTagName('head')[0];
-          r=o.createElement('script');r.async=1;
-          r.src=t+h._hjSettings.hjid+j+h._hjSettings.hjsv;
-          a.appendChild(r);
-      }})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');
-    </script>
-    """
-    st.components.v1.html(snippet, height=0)
+    st.components.v1.html(
+        f"""
+        <script>
+          (function(h,o,t,j,a,r){{
+              h.hj=h.hj||function(){{(h.hj.q=h.hj.q||[]).push(arguments)}};
+              h._hjSettings={{hjid:{hjid},hjsv:{hjsv}}};
+              a=o.getElementsByTagName('head')[0];
+              r=o.createElement('script');r.async=1;
+              r.src=t+h._hjSettings.hjid+j+h._hjSettings.hjsv;
+              a.appendChild(r);
+          }})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');
+        </script>
+        """,
+        height=0,
+    )
 
 def inject_tiktok_pixel(pixel_id: str):
     if not pixel_id:
         return
-    pixel = f"""
-    <!-- TikTok Pixel -->
-    <script>
-    !function (w, d, t) {{
-      w.TiktokAnalyticsObject = t; var ttq = w[t] = w[t] || [];
-      ttq.methods = ["page","track","identify","instances","debug","on","off","once","ready","alias","group","enableCookie","disableCookie"];
-      ttq.setAndDefer = function(t, e) {{ t[e] = function() {{ t.push([e].concat(Array.prototype.slice.call(arguments,0))) }} }};
-      for (var i = 0; i < ttq.methods.length; i++) ttq.setAndDefer(ttq, ttq.methods[i]);
-      ttq.instance = function(t) {{ var e = ttq._i[t] || []; return e.push = ttq.push, e }};
-      ttq.load = function(e, n) {{
-        var i = "https://analytics.tiktok.com/i18n/pixel/events.js";
-        ttq._i = ttq._i || {{}}; ttq._i[e] = []; ttq._i[e]._u = i;
-        ttq._t = ttq._t || {{}}; ttq._t[e] = +new Date; ttq._o = ttq._o || {{}};
-        var o = document.createElement("script"); o.type = "text/javascript"; o.async = !0; o.src = i + "?sdkid=" + e + "&lib=" + t;
-        var a = document.getElementsByTagName("script")[0]; a.parentNode.insertBefore(o, a);
-      }};
-      ttq.load("{pixel_id}"); ttq.page();
-    }}(window, document, 'ttq');
-    </script>
-    """
-    st.components.v1.html(pixel, height=0)
+    st.components.v1.html(
+        f"""
+        <script>
+        !function (w, d, t) {{
+          w.TiktokAnalyticsObject = t; var ttq = w[t] = w[t] || [];
+          ttq.methods = ["page","track","identify","instances","debug","on","off","once","ready","alias","group","enableCookie","disableCookie"];
+          ttq.setAndDefer = function(t, e) {{ t[e] = function() {{ t.push([e].concat(Array.prototype.slice.call(arguments,0))) }} }};
+          for (var i = 0; i < ttq.methods.length; i++) ttq.setAndDefer(ttq, ttq.methods[i]);
+          ttq.load = function(e, n) {{
+            var i = "https://analytics.tiktok.com/i18n/pixel/events.js";
+            ttq._i = ttq._i || {{}}; ttq._i[e] = []; ttq._i[e]._u = i;
+            ttq._t = ttq._t || {{}}; ttq._t[e] = +new Date; ttq._o = ttq._o || {{}};
+            var o = document.createElement("script"); o.type = "text/javascript"; o.async = !0; o.src = i + "?sdkid=" + e + "&lib=" + t;
+            var a = document.getElementsByTagName("script")[0]; a.parentNode.insertBefore(o, a);
+          }};
+          ttq.load("{pixel_id}"); ttq.page();
+        }}(window, document, 'ttq');
+        </script>
+        """,
+        height=0,
+    )
 
 def ttq_track(event: str, params: Optional[dict] = None):
     if not TIKTOK_PIXEL_ID:
         return
-    params = params or {}
     try:
-        params_json = json.dumps(params)
+        params_json = json.dumps(params or {})
     except Exception:
         params_json = "{}"
-    script = f"""
-    <script>
-      if (window.ttq) {{ ttq.track("{event}", {params_json}); }}
-    </script>
-    """
-    st.components.v1.html(script, height=0)
+    st.components.v1.html(
+        f"<script>if(window.ttq){{ttq.track('{event}', {params_json});}}</script>",
+        height=0,
+    )
 
 # ----------------------------------------------------------------------------
-# UTMs, referrer e user agent
+# UTMs, UA, referrer
 # ----------------------------------------------------------------------------
 try:
     from streamlit_js_eval import get_user_agent, get_page_location
@@ -171,43 +150,33 @@ except Exception:
     get_page_location = None
 
 def get_utms() -> Dict[str, str]:
-    # Streamlit novo: st.query_params; legado: experimental_get_query_params
-    qp = getattr(st, "query_params", None)
-    if qp is None:
+    qp = getattr(st, "query_params", None) or {}
+    if not qp:
         try:
             qp = st.experimental_get_query_params()
         except Exception:
             qp = {}
-    def pick(name: str) -> str:
-        v = qp.get(name)
+    def pick(k: str) -> str:
+        v = qp.get(k)
         if isinstance(v, list):
             return v[0]
         return v or ""
-    return {
-        "utm_source": pick("utm_source"),
-        "utm_medium": pick("utm_medium"),
-        "utm_campaign": pick("utm_campaign"),
-        "utm_content": pick("utm_content"),
-        "utm_term": pick("utm_term"),
-    }
+    return {k: pick(k) for k in ["utm_source","utm_medium","utm_campaign","utm_content","utm_term"]}
 
-def get_ua_and_referrer() -> Tuple[str, str]:
-    ua, ref = "", ""
+def get_ua_and_referrer() -> Tuple[str,str]:
+    ua = ""; ref = ""
     try:
         if get_user_agent:
-            ua = get_user_agent()
+            ua = safe_str(get_user_agent())
         if get_page_location:
             loc = get_page_location()
-            if isinstance(loc, dict):
-                ref = safe_str(loc.get("href", ""))
-            else:
-                ref = safe_str(loc)
+            ref = safe_str(loc.get("href","")) if isinstance(loc, dict) else safe_str(loc)
     except Exception:
         pass
     return ua, ref
 
 # ----------------------------------------------------------------------------
-# Log de visitas (CSV simples)
+# Log de visitas (CSV)
 # ----------------------------------------------------------------------------
 VISIT_HEADERS = [
     "ts","session_id","event",
@@ -222,29 +191,27 @@ def get_session_id() -> str:
         st.session_state["session_id"] = hashlib.sha1(os.urandom(24)).hexdigest()
     return safe_str(st.session_state["session_id"])
 
-def log_visit_event(name: str, extra: Optional[Dict[str, str]] = None):
-    extra = extra or {}
-    utms = get_utms()
-    ua, ref = get_ua_and_referrer()
+def log_visit_event(name: str, extra: Optional[Dict[str,str]] = None):
+    utm = get_utms(); ua, ref = get_ua_and_referrer()
     row = {
         "ts": now_iso(),
         "session_id": get_session_id(),
         "event": name,
-        "utm_source": utms.get("utm_source", ""),
-        "utm_medium": utms.get("utm_medium", ""),
-        "utm_campaign": utms.get("utm_campaign", ""),
-        "utm_content": utms.get("utm_content", ""),
-        "utm_term": utms.get("utm_term", ""),
+        "utm_source": utm.get("utm_source",""),
+        "utm_medium": utm.get("utm_medium",""),
+        "utm_campaign": utm.get("utm_campaign",""),
+        "utm_content": utm.get("utm_content",""),
+        "utm_term": utm.get("utm_term",""),
         "referrer": ref,
         "user_agent": ua,
     }
-    row.update({k: safe_str(v) for k, v in extra.items() if k not in row})
+    if extra:
+        row.update({k: safe_str(v) for k,v in extra.items() if k not in row})
     try:
         with VISITS_CSV.open("a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=VISIT_HEADERS, extrasaction="ignore")
-            writer.writerow(row)
+            csv.DictWriter(f, fieldnames=VISIT_HEADERS, extrasaction="ignore").writerow(row)
     except Exception as e:
-        print(f"[visits.csv] Falha ao gravar visita: {e}")
+        print(f"[visits.csv] erro ao gravar: {e}")
 
 # ----------------------------------------------------------------------------
 # OCR e extração robusta
@@ -266,13 +233,13 @@ except Exception:
 def ocr_bytes(data: bytes) -> str:
     if not _HAS_OCR:
         return ""
-    # 1) Tenta imagem direta
+    # 1) imagem direta
     try:
         img = Image.open(io.BytesIO(data))
         return pytesseract.image_to_string(img, lang="por+eng")
     except Exception:
         pass
-    # 2) PDF -> imagens
+    # 2) PDF → imagens
     try:
         pages = convert_from_bytes(data, dpi=300)
         texts: List[str] = []
@@ -305,9 +272,8 @@ def robust_extract_text(data: bytes, filename: Optional[str] = None) -> str:
                 return txt
         except Exception:
             pass
-    # 3) temp file: PDF ou DOCX
+    # 3) arquivo temporário (PDF ou DOCX)
     try:
-        DATA_DIR.mkdir(exist_ok=True)
         suffix = Path(filename).suffix if filename else ".pdf"
         tmp = DATA_DIR / f"_tmp_upload{suffix}"
         tmp.write_bytes(data)
@@ -335,7 +301,7 @@ def robust_extract_text(data: bytes, filename: Optional[str] = None) -> str:
     return ocr_bytes(data)
 
 # ----------------------------------------------------------------------------
-# Hotjar/TikTok + PageView
+# Hotjar/TikTok + PageView no carregamento
 # ----------------------------------------------------------------------------
 inject_hotjar(HOTJAR_ID, HOTJAR_SV)
 inject_tiktok_pixel(TIKTOK_PIXEL_ID)
@@ -343,20 +309,7 @@ log_visit_event("PageView")
 ttq_track("PageView", {"value": 1})
 
 # ----------------------------------------------------------------------------
-# Cabeçalho + navegação
-# ----------------------------------------------------------------------------
-st.title(APP_TITLE)
-st.caption("Transforme contratos em informação prática — com pontos de atenção e CET (quando aplicável).")
-DEFAULT_TAB = st.session_state.get("__tab__", "Início")
-nav = st.radio(
-    "Navegação", ["Início", "Analisar"],
-    index=0 if DEFAULT_TAB == "Início" else 1,
-    horizontal=True, label_visibility="collapsed"
-)
-st.session_state["__tab__"] = nav
-
-# ----------------------------------------------------------------------------
-# Sidebar (Plano/Stripe, Ajuda, Admin)
+# Sidebar (Stripe + Admin)
 # ----------------------------------------------------------------------------
 with st.sidebar:
     st.header("Plano & Ajuda")
@@ -367,17 +320,16 @@ with st.sidebar:
     STRIPE_ENABLED = bool(PRICING_PRODUCT_ID and (STRIPE_SECRET_KEY or STRIPE_PUBLIC_KEY))
     if STRIPE_ENABLED:
         try:
-            # Seu módulo aceita 1 argumento (secret se existir; senão public)
+            # init_stripe aceita 1 argumento (secret se houver; senão, public)
             init_stripe(STRIPE_SECRET_KEY or STRIPE_PUBLIC_KEY)
             if st.button("Assinar CLARA Pro", use_container_width=True):
-                session_url = create_checkout_session(PRICING_PRODUCT_ID)
-                if session_url:
+                url = create_checkout_session(PRICING_PRODUCT_ID)
+                if url:
                     st.success("Abrindo checkout…")
-                    st.markdown(f"[Ir para o pagamento]({session_url})")
-                    log_visit_event("CheckoutStart")
-                    ttq_track("InitiateCheckout", {"value": 1})
+                    st.markdown(f"[Ir para o pagamento]({url})")
+                    log_visit_event("CheckoutStart"); ttq_track("InitiateCheckout", {"value": 1})
                 else:
-                    st.error("Não consegui iniciar o checkout agora. Tente novamente em instantes.")
+                    st.error("Não consegui iniciar o checkout agora.")
         except Exception:
             STRIPE_ENABLED = False
             st.warning("Stripe indisponível neste ambiente. Verifique as secrets e o módulo.")
@@ -389,7 +341,20 @@ with st.sidebar:
     admin_mode = st.toggle("Exibir painel Admin", value=False)
 
 # ----------------------------------------------------------------------------
-# Página: Início (Landing)
+# Navegação (2 páginas dentro do mesmo arquivo)
+# ----------------------------------------------------------------------------
+st.title(APP_TITLE)
+st.caption("Transforme contratos em informação prática — pontos de atenção e CET (quando aplicável).")
+DEFAULT_TAB = st.session_state.get("__tab__", "Início")
+nav = st.radio(
+    "Navegação", ["Início", "Analisar"],
+    index=0 if DEFAULT_TAB == "Início" else 1,
+    horizontal=True, label_visibility="collapsed"
+)
+st.session_state["__tab__"] = nav
+
+# ----------------------------------------------------------------------------
+# Página: Início (landing)
 # ----------------------------------------------------------------------------
 if nav == "Início":
     st.markdown(
@@ -398,13 +363,6 @@ if nav == "Início":
   <h1>Clara — análise inteligente de contratos</h1>
   <p>Envie um PDF, foto ou DOCX e receba um resumo claro com pontos de atenção. Para contratos de crédito,
   estimamos o CET quando fizer sentido.</p>
-  <div class="svgwrap">
-    <svg width="220" height="220" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="140" cy="140" r="60" stroke="#2E6BFF" stroke-opacity="0.25" stroke-width="6"/>
-      <rect x="10" y="40" width="110" height="70" rx="10" stroke="#2E6BFF" stroke-opacity="0.25" stroke-width="6" />
-      <path d="M25 55 h80 M25 75 h80 M25 95 h50" stroke="#2E6BFF" stroke-opacity="0.3" stroke-width="6" stroke-linecap="round"/>
-    </svg>
-  </div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -413,23 +371,26 @@ if nav == "Início":
     st.markdown(
         """
 **A frase “Eu li e concordo com os termos e condições” virou símbolo de uma crise silenciosa no Brasil.**
-Empresários frequentemente **negligenciam a leitura profunda** dos contratos que assinam e isso os expõe a **vulnerabilidades evitáveis**.
-Milhões de brasileiros firmam documentos legais **sem entender completamente** o que estão aceitando — colocando **negócios e patrimônio em risco desnecessário**.
+Empresários frequentemente **negligenciam a leitura profunda** e se expõem a **vulnerabilidades evitáveis**.
+Milhões assinam documentos legais **sem entender** o que aceitam — colocando **negócios e patrimônio em risco**.
 A **Clara** nasceu para reduzir esse risco: transformar contratos em **informação compreensível**, com os alertas certos, antes da decisão.
 """
     )
 
-    st.markdown("### O que a Clara resolve")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown('<div class="card"><strong>Leitura rápida</strong><br/>Lê PDF, foto (OCR) e DOCX. Destaca cláusulas sensíveis.</div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown('<div class="card"><strong>Transparência</strong><br/>Mostra os <em>trechos</em> que embasam cada alerta, em linguagem simples.</div>', unsafe_allow_html=True)
-    with c3:
-        st.markdown('<div class="card"><strong>CET em segundos</strong><br/>Para contratos de crédito, estimamos rapidamente o CET, quando aplicável.</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+### O que a Clara resolve
+<div class="cards">
+  <div class="card"><strong>Leitura rápida</strong><br/>Lê PDF, foto (OCR) e DOCX. Destaca cláusulas sensíveis.</div>
+  <div class="card"><strong>Transparência</strong><br/>Mostra os <em>trechos</em> que embasam cada alerta, em linguagem simples.</div>
+  <div class="card"><strong>CET em segundos</strong><br/>Para contratos de crédito, estimamos rapidamente o CET, quando aplicável.</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
-    st.markdown("### Como usar")
-    st.markdown("1) Clique em **Começar agora**  •  2) **Envie** o arquivo (PDF/JPG/PNG/DOCX)  •  3) **Receba** o resumo e os alertas.")
+    st.markdown("### Como usar\n1) Clique em **Começar agora**  •  2) **Envie** o arquivo (PDF/JPG/PNG/DOCX)  •  3) **Receba** o resumo e os alertas.")
+
     if st.button("🚀 Começar agora", type="primary"):
         st.session_state["__tab__"] = "Analisar"
         st.rerun()
@@ -442,8 +403,8 @@ if nav == "Analisar":
     st.caption("Formatos: **PDF, JPG, PNG, DOCX**. Se for foto/scan, a Clara usa **OCR** automaticamente.")
     uploaded = st.file_uploader(
         "Envie o arquivo (até ~25 MB)",
-        type=["pdf", "jpg", "jpeg", "png", "docx"],
-        accept_multiple_files=False
+        type=["pdf","jpg","jpeg","png","docx"],
+        accept_multiple_files=False,
     )
 
     if uploaded is not None:
@@ -451,119 +412,106 @@ if nav == "Analisar":
         log_visit_event("FileUpload", {"file_name": uploaded.name})
         ttq_track("FileUpload", {"content_type": "contract", "file_name": uploaded.name})
 
-        st.markdown("### 2) Preferências de análise")
-        cA, cB, cC = st.columns(3)
-        with cA:
-            want_summary = st.checkbox("Resumo amigável", value=True)
-        with cB:
-            calc_cet = st.checkbox("Estimar CET (se aplicável)", value=True)
-        with cC:
-            st.write("")  # espaçador
+    st.markdown("### 2) Preferências de análise")
+    cA, cB, _ = st.columns(3)
+    with cA:
+        want_summary = st.checkbox("Resumo amigável", value=True)
+    with cB:
+        calc_cet = st.checkbox("Estimar CET (se aplicável)", value=True)
 
-        st.markdown("### 3) Seus dados (para enviarmos o relatório)")
-        n1, n2 = st.columns(2)
-        with n1:
-            user_name = st.text_input("Nome completo*")
-            user_phone = st.text_input("Celular (WhatsApp)*")
-        with n2:
-            user_email = st.text_input("E-mail*")
-            company = st.text_input("Empresa (opcional)")
-        st.caption("Usamos esses dados apenas para enviar seu relatório e contato de suporte.")
+    st.markdown("### 3) Seus dados (para enviarmos o relatório)")
+    n1, n2 = st.columns(2)
+    with n1:
+        user_name  = st.text_input("Nome completo*")
+        user_phone = st.text_input("Celular (WhatsApp)*")
+    with n2:
+        user_email = st.text_input("E-mail*")
+        company    = st.text_input("Empresa (opcional)")
+    st.caption("Usamos esses dados apenas para enviar seu relatório e contato de suporte.")
 
-        # Botão com validação
-        can_analyze = bool(user_name and user_email and user_phone and uploaded is not None)
-        analyze_clicked = st.button("🔎 Analisar agora", type="primary", disabled=not can_analyze)
+    # Form para clique confiável e validação
+    with st.form(key="form_analisar", clear_on_submit=False):
+        submitted = st.form_submit_button("🔎 Analisar agora", type="primary")
+        if submitted:
+            if not uploaded:
+                st.warning("Envie um arquivo antes de analisar."); st.stop()
+            if not (user_name and user_email and user_phone):
+                st.warning("Preencha **Nome**, **E-mail** e **Celular**."); st.stop()
 
-        if analyze_clicked:
             with st.status("Lendo e analisando o contrato…", expanded=True) as status:
                 status.write("Extraindo texto…")
                 data = uploaded.read()
                 text = robust_extract_text(data, filename=uploaded.name)
 
-                # Preview curto do texto extraído (qualidade)
+                # Prévia para validação
                 if text and len(text.strip()) > 0:
                     preview = (text.strip()[:600] + "…") if len(text.strip()) > 600 else text.strip()
                     with st.expander("Prévia do texto extraído (clique para ver)"):
-                        st.markdown(f"<div class='card'><pre style='white-space:pre-wrap'>{preview}</pre></div>", unsafe_allow_html=True)
+                        st.text(preview)
 
-                # OCR fallback agressivo se ainda curto
                 if not text or len(text.strip()) < 50:
-                    if _HAS_OCR:
-                        status.write("Arquivo parece imagem/scan. Rodando OCR…")
-                        text = ocr_bytes(data)
-                    else:
-                        status.write("OCR indisponível no ambiente.")
+                    status.write("Texto curto — aplicando OCR…")
+                    text = ocr_bytes(data)
 
                 if not text or len(text.strip()) < 30:
                     st.warning("Não consegui ler o conteúdo. Tente uma foto mais nítida ou um PDF com melhor qualidade.")
-                    status.update(label="Leitura falhou", state="error")
-                else:
-                    status.write("Rodando análise semântica…")
+                    status.update(label="Leitura falhou", state="error"); st.stop()
+
+                status.write("Rodando análise semântica…")
+                try:
+                    hits = analyze_contract_text(text)  # sem parâmetro lang
+                except Exception as e:
+                    st.error(f"Falha na análise: {e}")
+                    status.update(label="Análise falhou", state="error"); st.stop()
+
+                summary = summarize_hits(hits) if want_summary else None
+                cet_block = None
+                if calc_cet:
                     try:
-                        hits = analyze_contract_text(text)
-                    except Exception as e:
-                        st.error(f"Falha na análise: {e}")
-                        status.update(label="Análise falhou", state="error")
-                        hits = None
-
-                    if hits is not None:
-                        status.write("Gerando resumo…")
-                        summary = summarize_hits(hits) if want_summary else None
-
+                        cet_block = compute_cet_quick(text)
+                    except Exception:
                         cet_block = None
-                        if calc_cet:
-                            try:
-                                cet_block = compute_cet_quick(text)
-                            except Exception:
-                                cet_block = None
 
-                        # Logs de análise
-                        log_analysis_event(get_session_id(), uploaded.name, len(text))
-                        log_visit_event("AnalysisCompleted", {
-                            "file_name": uploaded.name, "name": user_name, "email": user_email, "phone": user_phone
-                        })
-                        ttq_track("AnalysisCompleted", {"value": 1})
+                # Logs de análise e evento concluído
+                log_analysis_event(get_session_id(), uploaded.name, len(text))
+                log_visit_event("AnalysisCompleted", {"file_name": uploaded.name, "name": user_name, "email": user_email, "phone": user_phone})
+                ttq_track("AnalysisCompleted", {"value": 1})
+                status.update(label="Análise concluída", state="complete")
 
-                        status.update(label="Análise concluída", state="complete")
+            # Resultado
+            st.markdown("## Resultado da análise")
+            if summary:
+                st.subheader("Resumo (para humanos)")
+                st.write(summary)
 
-                        # Resultados
-                        st.markdown("## Resultado da análise")
-                        if summary:
-                            st.subheader("Resumo (para humanos)")
-                            st.write(summary)
+            st.subheader("Pontos de atenção")
+            st.write(hits)
 
-                        st.subheader("Pontos de atenção")
-                        st.write(hits)
+            if cet_block:
+                st.subheader("Estimativa de CET")
+                st.write(cet_block)
 
-                        if cet_block:
-                            st.subheader("Estimativa de CET")
-                            st.write(cet_block)
+            st.info("Lembrete: esta ferramenta não substitui aconselhamento jurídico.")
 
-                        st.info("Lembrete: esta ferramenta não substitui aconselhamento jurídico.")
-
-                        st.markdown("### Quer receber o PDF do relatório por e-mail?")
-                        email = st.text_input("Seu e-mail")
-                        if st.button("Enviar relatório"):
-                            if email and "@" in email:
-                                log_subscriber(email)
-                                log_visit_event("Lead", {"email": email})
-                                st.success("Obrigado! Enviaremos em breve.")
-                            else:
-                                st.warning("Digite um e-mail válido.")
-    else:
-        st.info("Dica: se você não tiver o PDF, pode tirar uma **foto nítida** do contrato e enviar em JPG/PNG.")
+            st.markdown("### Quer receber o PDF do relatório por e‑mail?")
+            dest = st.text_input("Seu e‑mail", key="email_relatorio")
+            if st.button("Enviar relatório"):
+                if dest and "@" in dest:
+                    log_subscriber(dest)
+                    log_visit_event("Lead", {"email": dest})
+                    st.success("Obrigado! Enviaremos em breve.")
+                else:
+                    st.warning("Digite um e‑mail válido.")
 
 # ----------------------------------------------------------------------------
-# Admin
+# Admin (no sidebar toggle)
 # ----------------------------------------------------------------------------
-if admin_mode:
+if 'admin_mode' in locals() and admin_mode:
     st.header("Painel Admin")
-
     pv = up = ac = ld = 0
     try:
         with VISITS_CSV.open("r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
+            rows = list(csv.DictReader(f))
         for r in rows:
             ev = r.get("event", "")
             if ev == "PageView": pv += 1
@@ -571,27 +519,12 @@ if admin_mode:
             elif ev == "AnalysisCompleted": ac += 1
             elif ev == "Lead": ld += 1
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("PageViews", pv)
-        m2.metric("Uploads", up)
-        m3.metric("Análises", ac)
-        m4.metric("Leads", ld)
-
+        m1.metric("PageViews", pv); m2.metric("Uploads", up); m3.metric("Análises", ac); m4.metric("Leads", ld)
         st.subheader("Visitas recentes")
         st.dataframe(rows[-200:] if len(rows) > 200 else rows, use_container_width=True)
     except Exception as e:
-        st.write("Não consegui abrir o visits.csv ainda.")
+        st.write("Não consegui abrir o visits.csv.")
         st.write(e)
-
-    st.divider()
-    st.subheader("Assinantes (Stripe/Newsletter)")
-    try:
-        subs = list_subscribers()
-        if subs:
-            st.dataframe(subs, use_container_width=True)
-        else:
-            st.caption("Nenhum assinante listado.")
-    except Exception:
-        st.caption("list_subscribers() indisponível neste ambiente.")
 
 # ----------------------------------------------------------------------------
 # Rodapé
@@ -600,9 +533,9 @@ with st.expander("Como funciona a leitura de documentos?"):
     st.markdown(
         """
 - Se o PDF tiver **texto** embutido, extraímos diretamente.
-- Se for uma **foto** ou **scan**, usamos **OCR** para converter imagem em texto automaticamente.
+- Se for uma **foto** ou **scan**, usamos **OCR** automaticamente.
 - Para **.docx**, quando possível, extraímos o texto diretamente.
-- Depois, rodamos uma análise semântica que destaca **pontos de atenção** e, se aplicável, estimamos **CET**.
+- Depois, rodamos análise semântica para destacar **pontos de atenção** e, se aplicável, **CET**.
 """
     )
 
@@ -623,6 +556,8 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
+
+
 
 
 
