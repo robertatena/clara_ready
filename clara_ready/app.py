@@ -282,8 +282,7 @@ def ocr_bytes(data: bytes) -> str:
         texts: List[str] = []
         for pg in pages:
             texts.append(pytesseract.image_to_string(pg, lang="por+eng"))
-        return "
-".join(texts)
+        s)
     except Exception:
         return ""
 
@@ -320,9 +319,7 @@ def robust_extract_text(data: bytes) -> str:
                     chunks.append(page.extract_text() or "")
                 except Exception:
                     pass
-            txt = "
-".join(chunks)
-            if txt and len(txt.strip()) > 50:
+            txt = "\\n".join(chunkand len(txt.strip()) > 50:
                 return txt
         except Exception:
             pass
@@ -353,8 +350,7 @@ def robust_extract_text(data: bytes) -> str:
 st.title(APP_TITLE)
 
 # Navegação (Início / Analisar) — traz de volta a página inicial explicativa
-DEFAULT_TAB = st.session_state.get("__tab__", "Início")
-nav = st.radio("", ["Início", "Analisar"], index=0 if DEFAULT_TAB=="Início" else 1, horizontal=True)
+DEFAULT_TAB = st.session_state.get("__tab__", "Iníciizontal=True, label_visibility="collapsed")
 st.session_state["__tab__"] = nav
 
 if nav == "Início":
@@ -413,19 +409,7 @@ inject_hotjar(HOTJAR_ID, HOTJAR_SV)
 inject_tiktok_pixel(TIKTOK_PIXEL_ID)
 
 # Loga pageview imediatamente
-log_visit_event("PageView")
-
-# Também registra PageView no TikTok
-ttq_track("PageView", {"value": 1})
-
-
-# ----------------------------------------------------------------------------
-# Sidebar: Plano/Stripe, Ajuda e Admin
-# ----------------------------------------------------------------------------
-
-with st.sidebar:
-    st.header("Plano & Ajuda")
-    st.write("Se precisar de ajuda, fale com a gente pelo WhatsApp.")
+log_visit_ee precisar de ajuda, fale com a gente pelo WhatsApp.")
 
     st.divider()
     st.subheader("Assinatura")
@@ -465,116 +449,15 @@ with st.sidebar:
 # Área principal — Fluxo de análise
 # ----------------------------------------------------------------------------
 
-# Navegação temporariamente unificada para evitar erro de indentação durante ajustes
-SHOW_ANALYSIS = True
+if nav == "Analisar":
+    st.markdown("### 1) Envie seu contrato")
+    st.caption("Formatos: **PDF, JPG, PNG**. Se for uma foto/scan, a Clara usa **OCR automático**.")
+    st.markdown("**Formatos aceitos:** PDF, JPG, PNG. Se for foto/scan, eu leio com OCR automaticamente.")
 
-st.markdown("### 1) Envie seu contrato")
-st.caption("Formatos: **PDF, JPG, PNG**. Se for uma foto/scan, a Clara usa **OCR automático**.")
-st.markdown("**Formatos aceitos:** PDF, JPG, PNG. Se for foto/scan, eu leio com OCR automaticamente.")
+    uploaded = st.file_uplo  st.warning("Digite um e‑mail válido.")
+    else:
+        st.info("Dica: se você não tiver o PDF, pode tirar uma **foto nítida** do contrato e enviar em JPG/PNG.")
 
-uploaded = st.file_uploader("Envie o arquivo (até ~25 MB)", type=["pdf","jpg","jpeg","png"], accept_multiple_files=False)
-
-if uploaded is not None:
-    # Confirmação visual do arquivo
-    st.success(f"Arquivo recebido: {uploaded.name}")
-    log_visit_event("FileUpload", {"file_name": uploaded.name})
-    ttq_track("FileUpload", {"content_type": "contract", "file_name": uploaded.name})
-
-    # Configurações rápidas
-    st.markdown("### 2) Preferências de análise")
-colA, colB, colC = st.columns(3)
-with colA:
-    lang_pt = st.checkbox("Análise em Português", value=True)
-with colB:
-    want_summary = st.checkbox("Resumo amigável", value=True)
-with colC:
-    calc_cet = st.checkbox("Estimar CET (se aplicável)", value=True)
-
-st.markdown("### 3) Seus dados (para enviarmos o relatório)")
-colN1, colN2 = st.columns(2)
-with colN1:
-    user_name = st.text_input("Nome completo*")
-    user_phone = st.text_input("Celular (WhatsApp)*")
-with colN2:
-    user_email = st.text_input("E-mail*")
-    company = st.text_input("Empresa (opcional)")
-
-st.caption("Usamos esses dados apenas para enviar seu relatório e contato de suporte.")
-
-if st.button("🔎 Analisar agora", type="primary"):
-        with st.status("Lendo e analisando o contrato…", expanded=True) as status:
-            status.write("Extraindo texto…")
-            data = uploaded.read()
-
-            # 1) Extrai texto de forma robusta (PDF texto/scan)
-            text = robust_extract_text(data)
-
-            # 2) Se ainda curto, tenta OCR explícito (já incluso em robust_extract_text, mas deixamos safety)
-            if not text or len(text.strip()) < 50:
-                if _HAS_OCR:
-                    status.write("Arquivo parece imagem/scan. Rodando OCR…")
-                    text = ocr_bytes(data)
-                else:
-                    status.write("Não consegui ler texto do arquivo (OCR indisponível neste ambiente).")
-
-            if not text or len(text.strip()) < 30:
-                st.warning("Não consegui ler o conteúdo. Tente uma foto mais nítida ou um PDF com melhor qualidade.")
-                status.update(label="Leitura falhou", state="error")
-            else:
-                status.write("Rodando análise semântica…")
-                try:
-                    hits = analyze_contract_text(text)
-                except Exception as e:
-                    st.error(f"Falha na análise: {e}")
-                    status.update(label="Análise falhou", state="error")
-                    hits = None
-
-                if hits is not None:
-                    status.write("Gerando resumo…")
-                    summary = summarize_hits(hits) if want_summary else None
-
-                    cet_block = None
-                    if calc_cet:
-                        try:
-                            cet_block = compute_cet_quick(text)
-                        except Exception:
-                            cet_block = None
-
-                    # Loga evento de análise concluída
-                    log_analysis_event(get_session_id(), uploaded.name, len(text))
-                    log_visit_event("AnalysisCompleted", {"file_name": uploaded.name, "name": user_name, "email": user_email, "phone": user_phone})
-                    ttq_track("AnalysisCompleted", {"value": 1})
-
-                    status.update(label="Análise concluída", state="complete")
-
-                    # Apresentação de resultados
-                    st.markdown("## Resultado da análise")
-
-                    if summary:
-                        st.subheader("Resumo (para humanos)")
-                        st.write(summary)
-
-                    st.subheader("Pontos de atenção")
-                    st.write(hits)
-
-                    if cet_block:
-                        st.subheader("Estimativa de CET")
-                        st.write(cet_block)
-
-                    st.info("Lembrete: esta ferramenta não substitui aconselhamento jurídico.")
-
-                    st.markdown("### Quer receber o PDF do relatório por e‑mail?")
-                    email = st.text_input("Seu e‑mail")
-                    if st.button("Enviar relatório"):
-                        if email and "@" in email:
-                            log_subscriber(email)
-                            log_visit_event("Lead", {"email": email})
-                            st.success("Obrigado! Enviaremos em breve.")
-                        else:
-                            st.warning("Digite um e‑mail válido.")
-
-else:
-    st.info("Dica: se você não tiver o PDF, pode tirar uma **foto nítida** do contrato e enviar em JPG/PNG.")
 
 
 # ----------------------------------------------------------------------------
