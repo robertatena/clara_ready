@@ -653,7 +653,3 @@ with st.expander("Privacidade"):
 # - Este arquivo preserva as assinaturas das funções importadas de app_modules/* para manter compatibilidade.
 #
 # Fim do app.py v15
-
-
-
-
