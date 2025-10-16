@@ -337,19 +337,32 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Assinatura")
-    if STRIPE_PUBLIC_KEY and PRICING_PRODUCT_ID:
-        init_stripe(STRIPE_PUBLIC_KEY, STRIPE_SECRET_KEY)
-        if st.button("Assinar CLARA Pro", use_container_width=True):
-            session_url = create_checkout_session(PRICING_PRODUCT_ID)
-            if session_url:
-                st.success("Abrindo checkout…")
-                st.markdown(f"[Ir para o pagamento]({session_url})")
-                log_visit_event("CheckoutStart")
-                ttq_track("InitiateCheckout", {"value": 1})
-            else:
-                st.error("Não consegui iniciar o checkout agora. Tente novamente em instantes.")
-    else:
-        st.info("Stripe não configurado neste ambiente.")
+
+    # Inicialização segura do Stripe (não quebra a aplicação se faltar secret ou a assinatura mudar)
+    STRIPE_ENABLED = bool(PRICING_PRODUCT_ID and (STRIPE_SECRET_KEY or STRIPE_PUBLIC_KEY))
+    if STRIPE_ENABLED:
+        try:
+            # Tenta assinatura antiga (1 arg) primeiro — evita TypeError:
+            try:
+                init_stripe(STRIPE_SECRET_KEY or STRIPE_PUBLIC_KEY)
+            except TypeError:
+                # Fallback para assinatura nova (2 args):
+                init_stripe(STRIPE_PUBLIC_KEY, STRIPE_SECRET_KEY)
+
+            if st.button("Assinar CLARA Pro", use_container_width=True):
+                session_url = create_checkout_session(PRICING_PRODUCT_ID)
+                if session_url:
+                    st.success("Abrindo checkout…")
+                    st.markdown(f"[Ir para o pagamento]({session_url})")
+                    log_visit_event("CheckoutStart")
+                    ttq_track("InitiateCheckout", {"value": 1})
+                else:
+                    st.error("Não consegui iniciar o checkout agora. Tente novamente em instantes.")
+        except Exception as e:
+            STRIPE_ENABLED = False
+            st.warning("Stripe indisponível neste ambiente. Verifique as secrets e o módulo stripe_utils.")
+    if not STRIPE_ENABLED:
+        st.info("Stripe não configurado ou indisponível neste ambiente.")
 
     st.divider()
     st.subheader("Admin")
@@ -537,4 +550,5 @@ with st.expander("Privacidade"):
 # - Este arquivo preserva as assinaturas das funções importadas de app_modules/* para manter compatibilidade.
 #
 # Fim do app.py v15
+
 
