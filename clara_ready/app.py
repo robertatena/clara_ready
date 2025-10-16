@@ -283,28 +283,62 @@ def ocr_bytes(data: bytes) -> str:
     except Exception:
         return ""
 
-
 # ----------------------------------------------------------------------------
-# UI/Estilos (contraste e legibilidade no mobile)
+# Extração robusta de texto (multi-método)
 # ----------------------------------------------------------------------------
+# 1) Tenta o extractor nativo (app_modules.pdf_utils.extract_text_from_pdf)
+# 2) Tenta pypdf (comum em muitos ambientes)
+# 3) Tenta via arquivo temporário (alguns extractors esperam caminho)
+# 4) Se nada retornar texto suficiente, faz OCR (se disponível)
 
-CSS_STYLE = """
-<style>
-  .block-container { padding-top: 0.6rem; }
-  div[data-testid="stFileUploader"] {
-    border: 1px solid rgba(0,0,0,0.12);
-    border-radius: 12px; padding: 12px; background: rgba(0,0,0,0.02);
-  }
-  .muted { color: #666; font-size: 0.9rem; }
-  .caption { color: #444; font-size: 0.82rem; }
-  .ok-badge { display:inline-block; padding: 4px 8px; border-radius: 999px; background: #e6f4ea; }
-  .warn-badge { display:inline-block; padding: 4px 8px; border-radius: 999px; background: #fff7e6; }
-  .error-badge { display:inline-block; padding: 4px 8px; border-radius: 999px; background: #fdecea; }
-  .cta { font-weight: 600; }
-</style>
-"""
+try:
+    from pypdf import PdfReader  # type: ignore
+    _HAS_PYPDF = True
+except Exception:
+    _HAS_PYPDF = False
 
-st.markdown(CSS_STYLE, unsafe_allow_html=True)
+
+def robust_extract_text(data: bytes) -> str:
+    # 1) extractor nativo
+    try:
+        txt = extract_text_from_pdf(data)
+        if txt and len(txt.strip()) > 50:
+            return txt
+    except Exception:
+        pass
+    # 2) pypdf
+    if _HAS_PYPDF:
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            chunks: List[str] = []
+            for page in reader.pages:
+                try:
+                    chunks.append(page.extract_text() or "")
+                except Exception:
+                    pass
+            txt = "\n".join(chunks)
+            if txt and len(txt.strip()) > 50:
+                return txt
+        except Exception:
+            pass
+    # 3) caminho temporário
+    try:
+        tmp = Path("./data/_tmp_upload.pdf"); tmp.parent.mkdir(exist_ok=True)
+        tmp.write_bytes(data)
+        try:
+            txt = extract_text_from_pdf(str(tmp))
+        except Exception:
+            txt = ""
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        if txt and len(txt.strip()) > 50:
+            return txt
+    except Exception:
+        pass
+    # 4) OCR
+    return ocr_bytes(data)
 
 
 # ----------------------------------------------------------------------------
@@ -430,6 +464,7 @@ with st.sidebar:
 SHOW_ANALYSIS = True
 
 st.markdown("### 1) Envie seu contrato")
+st.caption("Formatos: **PDF, JPG, PNG**. Se for uma foto/scan, a Clara usa **OCR automático**.")
 st.markdown("**Formatos aceitos:** PDF, JPG, PNG. Se for foto/scan, eu leio com OCR automaticamente.")
 
 uploaded = st.file_uploader("Envie o arquivo (até ~25 MB)", type=["pdf","jpg","jpeg","png"], accept_multiple_files=False)
@@ -455,15 +490,11 @@ if uploaded is not None:
             status.write("Extraindo texto…")
             data = uploaded.read()
 
-            # 1) Extrai texto do PDF (ou retorna vazio se imagem)
-            text = ""
-            try:
-                text = extract_text_from_pdf(data)
-            except Exception:
-                text = ""
+            # 1) Extrai texto de forma robusta (PDF texto/scan)
+            text = robust_extract_text(data)
 
-            # 2) Se texto curto → tenta OCR
-            if not text or len(text.strip()) < 30:
+            # 2) Se ainda curto, tenta OCR explícito (já incluso em robust_extract_text, mas deixamos safety)
+            if not text or len(text.strip()) < 50:
                 if _HAS_OCR:
                     status.write("Arquivo parece imagem/scan. Rodando OCR…")
                     text = ocr_bytes(data)
@@ -606,7 +637,6 @@ with st.expander("Privacidade"):
 # - Este arquivo preserva as assinaturas das funções importadas de app_modules/* para manter compatibilidade.
 #
 # Fim do app.py v15
-
 
 
 
