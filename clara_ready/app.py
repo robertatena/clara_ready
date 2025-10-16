@@ -212,6 +212,7 @@ VISIT_HEADERS = [
     "utm_term",
     "referrer",
     "user_agent",
+    "file_name",
 ]
 
 ensure_csv_headers(VISITS_CSV, VISIT_HEADERS)
@@ -425,7 +426,8 @@ with st.sidebar:
 # Área principal — Fluxo de análise
 # ----------------------------------------------------------------------------
 
-if nav == "Analisar":
+# Navegação temporariamente unificada para evitar erro de indentação durante ajustes
+SHOW_ANALYSIS = True
 
 st.markdown("### 1) Envie seu contrato")
 st.markdown("**Formatos aceitos:** PDF, JPG, PNG. Se for foto/scan, eu leio com OCR automaticamente.")
