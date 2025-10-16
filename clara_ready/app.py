@@ -1,4 +1,4 @@
-# app.py — CLARA • Análise de Contratos (v21, single-file com abas)
+# app.py — CLARA • Análise de Contratos (v22)
 from __future__ import annotations
 import os, io, csv, json, hashlib
 from pathlib import Path
@@ -6,17 +6,15 @@ from datetime import datetime
 from typing import Dict, Any, Tuple, List, Optional
 import streamlit as st
 
-# ---- módulos do seu projeto ----
+# módulos locais
 from app_modules.pdf_utils import extract_text_from_pdf
 from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
 from app_modules.stripe_utils import init_stripe, create_checkout_session
 from app_modules.storage import log_analysis_event, log_subscriber, list_subscribers
 
-# =========================
-# Config & estilos
-# =========================
+# -------------------- Config --------------------
 st.set_page_config(page_title="CLARA • Análise de Contratos", page_icon="📄", layout="wide")
-VERSION = "v21"
+VERSION = "v22"
 
 STRIPE_PUBLIC_KEY = st.secrets.get("STRIPE_PUBLIC_KEY", "")
 STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", "")
@@ -42,19 +40,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# =========================
-# Utils
-# =========================
+# -------------------- Utils --------------------
 def now_iso() -> str: return datetime.utcnow().isoformat()
-def safe_str(x: Any) -> str:
+def safe_str(x: Any) -> str: 
     try: return str(x)
     except Exception: return ""
 
 VISIT_HEADERS = [
     "ts","session_id","event",
     "utm_source","utm_medium","utm_campaign","utm_content","utm_term",
-    "referrer","user_agent",
-    "file_name","name","email","phone",
+    "referrer","user_agent","file_name","name","email","phone",
 ]
 def ensure_csv_headers(path: Path, headers: List[str]):
     if not path.exists():
@@ -62,7 +57,7 @@ def ensure_csv_headers(path: Path, headers: List[str]):
             csv.writer(f).writerow(headers)
 ensure_csv_headers(VISITS_CSV, VISIT_HEADERS)
 
-# ---- Pixels
+# Pixels
 def inject_hotjar(hjid: str, hjsv: str="6"):
     if not hjid: return
     st.components.v1.html(f"""
@@ -70,7 +65,6 @@ def inject_hotjar(hjid: str, hjsv: str="6"):
     a=o.getElementsByTagName('head')[0];r=o.createElement('script');r.async=1;
     r.src=t+h._hjSettings.hjid+j+h._hjSettings.hjsv;a.appendChild(r);}})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');</script>
     """, height=0)
-
 def inject_tiktok_pixel(pixel_id: str):
     if not pixel_id: return
     st.components.v1.html(f"""
@@ -85,26 +79,23 @@ def inject_tiktok_pixel(pixel_id: str):
         var a = d.getElementsByTagName("script")[0]; a.parentNode.insertBefore(o, a); }};
       ttq.load("{pixel_id}"); ttq.page(); }}(window, document, 'ttq');</script>
     """, height=0)
-
 def ttq_track(event: str, params: Optional[dict]=None):
     if not TIKTOK_PIXEL_ID: return
     try: p = json.dumps(params or {})
     except Exception: p = "{}"
     st.components.v1.html(f"<script>if(window.ttq){{ttq.track('{event}', {p});}}</script>", height=0)
 
-# ---- UTM/UA/referrer (somente API nova; sem experimental)
+# UTM/UA/referrer (API nova)
 try:
     from streamlit_js_eval import get_user_agent, get_page_location
 except Exception:
     get_user_agent = None; get_page_location = None
-
 def get_utms() -> Dict[str,str]:
     qp = getattr(st, "query_params", {}) or {}
     def pick(k): 
         v = qp.get(k, "")
         return v[0] if isinstance(v, list) else (v or "")
     return {k: pick(k) for k in ["utm_source","utm_medium","utm_campaign","utm_content","utm_term"]}
-
 def get_ua_and_referrer() -> Tuple[str,str]:
     ua = ""; ref = ""
     try:
@@ -114,21 +105,17 @@ def get_ua_and_referrer() -> Tuple[str,str]:
             ref = safe_str(loc.get("href","")) if isinstance(loc, dict) else safe_str(loc)
     except Exception: pass
     return ua, ref
-
 def get_session_id() -> str:
     if "session_id" not in st.session_state:
         st.session_state["session_id"] = hashlib.sha1(os.urandom(24)).hexdigest()
     return safe_str(st.session_state["session_id"])
-
 def log_visit_event(name: str, extra: Optional[Dict[str,str]]=None):
     utm = get_utms(); ua, ref = get_ua_and_referrer()
-    row = {
-        "ts": now_iso(), "session_id": get_session_id(), "event": name,
-        "utm_source": utm.get("utm_source",""), "utm_medium": utm.get("utm_medium",""),
-        "utm_campaign": utm.get("utm_campaign",""), "utm_content": utm.get("utm_content",""),
-        "utm_term": utm.get("utm_term",""), "referrer": ref, "user_agent": ua,
-        "file_name": "", "name": "", "email": "", "phone": "",
-    }
+    row = {"ts": now_iso(), "session_id": get_session_id(), "event": name,
+           "utm_source": utm.get("utm_source",""), "utm_medium": utm.get("utm_medium",""),
+           "utm_campaign": utm.get("utm_campaign",""), "utm_content": utm.get("utm_content",""),
+           "utm_term": utm.get("utm_term",""), "referrer": ref, "user_agent": ua,
+           "file_name": "", "name": "", "email": "", "phone": ""}
     if extra:
         for k in ("file_name","name","email","phone"):
             if k in extra: row[k] = safe_str(extra[k])
@@ -138,7 +125,7 @@ def log_visit_event(name: str, extra: Optional[Dict[str,str]]=None):
     except Exception as e:
         print(f"[visits.csv] Falha ao gravar visita: {e}")
 
-# ---- OCR/Extração
+# OCR/Extração
 _HAS_OCR = True
 try:
     import pytesseract
@@ -146,13 +133,11 @@ try:
     from PIL import Image
 except Exception:
     _HAS_OCR = False
-
 try:
     from pypdf import PdfReader
     _HAS_PYPDF = True
 except Exception:
     _HAS_PYPDF = False
-
 def ocr_bytes(data: bytes) -> str:
     if not _HAS_OCR: return ""
     try:
@@ -162,9 +147,7 @@ def ocr_bytes(data: bytes) -> str:
     try:
         pages = convert_from_bytes(data, dpi=300)
         return "\n".join([pytesseract.image_to_string(pg, lang="por+eng") for pg in pages])
-    except Exception:
-        return ""
-
+    except Exception: return ""
 def robust_extract_text(data: bytes, filename: Optional[str]=None) -> str:
     try:
         txt = extract_text_from_pdf(data) if (filename is None or str(filename).lower().endswith(".pdf")) else ""
@@ -195,16 +178,12 @@ def robust_extract_text(data: bytes, filename: Optional[str]=None) -> str:
     except Exception: pass
     return ocr_bytes(data)
 
-# =========================
-# Pixels + PageView
-# =========================
+# -------------------- Pixels + PV --------------------
 inject_hotjar(HOTJAR_ID, HOTJAR_SV)
 inject_tiktok_pixel(TIKTOK_PIXEL_ID)
 log_visit_event("PageView"); ttq_track("PageView", {"value":1})
 
-# =========================
-# Sidebar (Stripe + Admin)
-# =========================
+# -------------------- Sidebar --------------------
 with st.sidebar:
     st.header("Plano & Ajuda")
     st.write("Precisa de suporte? Fale com a gente pelo WhatsApp.")
@@ -213,7 +192,7 @@ with st.sidebar:
     STRIPE_ENABLED = bool(PRICING_PRODUCT_ID and (STRIPE_SECRET_KEY or STRIPE_PUBLIC_KEY))
     if STRIPE_ENABLED:
         try:
-            init_stripe(STRIPE_SECRET_KEY or STRIPE_PUBLIC_KEY)  # 1 argumento
+            init_stripe(STRIPE_SECRET_KEY or STRIPE_PUBLIC_KEY)  # 1 arg
             if st.button("Assinar CLARA Pro", use_container_width=True):
                 url = create_checkout_session(PRICING_PRODUCT_ID)
                 if url:
@@ -224,23 +203,20 @@ with st.sidebar:
                     st.error("Não consegui iniciar o checkout agora.")
         except Exception:
             STRIPE_ENABLED = False
-            st.warning("Stripe indisponível neste ambiente. Verifique as secrets.")
+            st.warning("Stripe indisponível neste ambiente.")
     if not STRIPE_ENABLED:
         st.info("Stripe não configurado ou indisponível.")
-
     st.divider()
     st.subheader("Admin")
     admin_mode = st.toggle("Exibir painel Admin", value=False)
 
-# =========================
-# Cabeçalho + ABAS (2 páginas)
-# =========================
+# -------------------- Abas (2 páginas) --------------------
 st.title("CLARA • Análise de Contratos")
 st.caption("Transforme contratos em informação prática — pontos de atenção e CET (quando aplicável).")
 
 tab_inicio, tab_analisar = st.tabs(["🏠 Início", "📄 Analisar"])
 
-# ---------- Início
+# ====== INÍCIO ======
 with tab_inicio:
     st.markdown("""
 <div class="hero">
@@ -266,14 +242,14 @@ A **Clara** nasceu para reduzir esse risco: transformar contratos em **informaç
 </div>
 """, unsafe_allow_html=True)
 
-# ---------- Analisar
+# ====== ANALISAR ======
 with tab_analisar:
     st.markdown("### 1) Envie seu contrato")
     st.caption("Formatos: **PDF, JPG, PNG, DOCX**. Para foto/scan, usamos **OCR** automaticamente.")
     uploaded = st.file_uploader("Envie o arquivo (até ~25 MB)",
                                 type=["pdf","jpg","jpeg","png","docx"],
                                 accept_multiple_files=False,
-                                key="upload_main")
+                                key="upload_file")
 
     if uploaded:
         st.success(f"Arquivo recebido: {uploaded.name}")
@@ -282,49 +258,60 @@ with tab_analisar:
 
     st.markdown("### 2) Preferências de análise")
     cA, cB, _ = st.columns(3)
-    with cA: want_summary = st.checkbox("Resumo amigável", value=True, key="sum_check")
-    with cB: calc_cet = st.checkbox("Estimar CET (se aplicável)", value=True, key="cet_check")
+    with cA: want_summary = st.checkbox("Resumo amigável", value=True, key="pref_sum")
+    with cB: calc_cet = st.checkbox("Estimar CET (se aplicável)", value=True, key="pref_cet")
 
-    st.markdown("### 3) Seus dados (para enviarmos o relatório)")
-    n1, n2 = st.columns(2)
-    with n1:
-        user_name  = st.text_input("Nome completo*", key="name")
-        user_phone = st.text_input("Celular (WhatsApp)*", key="phone")
-    with n2:
-        user_email = st.text_input("E-mail*", key="email")
-        company    = st.text_input("Empresa (opcional)", key="company")
-    st.caption("Usamos esses dados apenas para enviar seu relatório e contato de suporte.")
+    st.markdown("### 3) Quem é você e seu contexto")
+    col1, col2 = st.columns(2)
+    with col1:
+        setor = st.selectbox(
+            "Setor do contrato*",
+            ["Serviços", "Tecnologia", "Imobiliário", "Saúde", "Educação", "Construção", "Financeiro", "Varejo", "Outro"],
+            index=0, key="setor"
+        )
+        papel = st.selectbox(
+            "Seu papel no contrato*",
+            ["Sou CONTRATANTE (quem contrata/compra)", "Sou CONTRATADO (prestador/fornecedor)"],
+            index=0, key="papel"
+        )
+    with col2:
+        user_name  = st.text_input("Nome completo*", key="u_name")
+        user_email = st.text_input("E-mail*", key="u_email")
+        user_phone = st.text_input("Celular (WhatsApp)*", key="u_phone")
+    st.caption("Usamos esses dados somente para personalizar a análise e enviar o relatório.")
 
-    # Form garante clique confiável e mantém os campos na tela
+    # ===== Botão dentro de FORM (funciona!) =====
     with st.form("form_analisar", clear_on_submit=False):
         submitted = st.form_submit_button("🔎 Analisar agora", type="primary")
         if submitted:
             if not uploaded:
                 st.warning("Envie um arquivo antes de analisar."); st.stop()
-            if not (user_name and user_email and user_phone):
-                st.warning("Preencha **Nome**, **E-mail** e **Celular**."); st.stop()
+            if not (user_name and user_email and user_phone and setor and papel):
+                st.warning("Preencha **todos** os campos obrigatórios."); st.stop()
 
             with st.status("Lendo e analisando o contrato…", expanded=True) as status:
                 status.write("Extraindo texto…")
                 data = uploaded.read()
                 text = robust_extract_text(data, filename=uploaded.name)
 
-                if text and len(text.strip()) > 0:
-                    preview = (text.strip()[:600] + "…") if len(text.strip()) > 600 else text.strip()
-                    with st.expander("Prévia do texto extraído (clique para ver)"):
-                        st.text(preview)
+                # Injeta contexto de setor/papel no início do texto (melhora a análise)
+                contexto = (
+                    f"Contexto do usuário: Setor={setor}. Papel={papel}. "
+                    f"Nome={user_name}. E-mail={user_email}. Telefone={user_phone}.\n\n"
+                )
+                text = contexto + (text or "")
 
                 if not text or len(text.strip()) < 50:
                     status.write("Texto curto — aplicando OCR…")
-                    text = ocr_bytes(data)
+                    text = contexto + (ocr_bytes(data) or "")
 
-                if not text or len(text.strip()) < 30:
+                if not text or len(text.strip()) < 50:
                     st.warning("Não consegui ler o conteúdo. Tente uma foto mais nítida ou um PDF com melhor qualidade.")
                     status.update(label="Leitura falhou", state="error"); st.stop()
 
                 status.write("Rodando análise semântica…")
                 try:
-                    hits = analyze_contract_text(text)
+                    hits = analyze_contract_text(text)   # sem 'lang'
                 except Exception as e:
                     st.error(f"Falha na análise: {e}")
                     status.update(label="Análise falhou", state="error"); st.stop()
@@ -338,11 +325,15 @@ with tab_analisar:
                         cet_block = None
 
                 log_analysis_event(get_session_id(), uploaded.name, len(text))
-                log_visit_event("AnalysisCompleted", {"file_name": uploaded.name, "name": user_name, "email": user_email, "phone": user_phone})
+                log_visit_event("AnalysisCompleted", {
+                    "file_name": uploaded.name, "name": user_name, "email": user_email, "phone": user_phone
+                })
                 ttq_track("AnalysisCompleted", {"value":1})
                 status.update(label="Análise concluída", state="complete")
 
+            # ===== Resultado + Relatório para download =====
             st.markdown("## Resultado da análise")
+
             if summary:
                 st.subheader("Resumo (para humanos)")
                 st.write(summary)
@@ -356,8 +347,36 @@ with tab_analisar:
 
             st.info("Lembrete: esta ferramenta não substitui aconselhamento jurídico.")
 
+            # Relatório em Markdown
+            relatorio_md = f"""# Relatório CLARA – Análise de Contrato
+
+**Data:** {now_iso()}  
+**Arquivo:** {uploaded.name}  
+**Setor:** {setor}  
+**Papel:** {papel}  
+**Nome:** {user_name}  •  **E-mail:** {user_email}  •  **WhatsApp:** {user_phone}
+
+---
+
+## Resumo
+{summary or "_(Resumo não solicitado.)_"}
+
+## Pontos de atenção
+{safe_str(hits)}
+
+## Estimativa de CET
+{safe_str(cet_block) if cet_block else "_(Não aplicável ou não calculado.)_"}
+"""
+            st.download_button(
+                "⬇️ Baixar relatório (.md)",
+                data=relatorio_md.encode("utf-8"),
+                file_name=f"Relatorio_CLARA_{Path(uploaded.name).stem}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
+
             st.markdown("### Quer receber o PDF do relatório por e-mail?")
-            dest = st.text_input("Seu e-mail", key="email_relatorio")
+            dest = st.text_input("Seu e-mail", key="dest_email")
             if st.button("Enviar relatório"):
                 if dest and "@" in dest:
                     log_subscriber(dest); log_visit_event("Lead", {"email": dest})
@@ -365,7 +384,7 @@ with tab_analisar:
                 else:
                     st.warning("Digite um e-mail válido.")
 
-# ---------- Admin no sidebar
+# ===== Admin =====
 if 'admin_mode' in locals() and admin_mode:
     st.header("Painel Admin")
     pv = up = ac = ld = 0
@@ -385,7 +404,7 @@ if 'admin_mode' in locals() and admin_mode:
     except Exception as e:
         st.write("Não consegui abrir o visits.csv."); st.write(e)
 
-# ---------- Rodapé / FAQ
+# ===== Rodapé / FAQ =====
 with st.expander("Como funciona a leitura de documentos?"):
     st.markdown("""
 - Se o PDF tiver **texto** embutido, extraímos diretamente.
@@ -393,20 +412,16 @@ with st.expander("Como funciona a leitura de documentos?"):
 - Para **.docx**, quando possível, extraímos o texto diretamente.
 - Depois, rodamos análise semântica para destacar **pontos de atenção** e, se aplicável, **CET**.
 """)
-
 with st.expander("Privacidade"):
     st.markdown("""
 - Seu arquivo é processado para análise e não é compartilhado.
 - Registramos apenas **métricas de uso** (PageView, Upload, Análise) com identificador de sessão anônimo.
 """)
-
 st.markdown("""
 <footer class="clara">
   <small><strong>Disclaimer:</strong> A Clara fornece apoio informativo e <em>não</em> substitui aconselhamento jurídico profissional.</small>
 </footer>
 """, unsafe_allow_html=True)
-
-
 
 
 
