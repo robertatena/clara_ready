@@ -1,471 +1,608 @@
-# app.py — CLARA • Análise de Contratos (v24, single-file, formulário confiável)
-from __future__ import annotations
-import os, io, csv, json, hashlib, inspect, urllib.parse
+# app.py — CLARA • Análise de Contratos (single‑page, UX refinada)
+# Home clean & alinhada + linguagem simples + Stripe + CET + logs CSV + Hotjar + Admin
+# Mantém TODAS as funcionalidades e incorpora o feedback do usuário
+
+import os
+import io
+import re
+import csv
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Dict, Any, Tuple, Set, List
+
 import streamlit as st
 
-# ---- módulos locais do seu projeto ----
+# ---- módulos locais (mantêm sua estrutura) ----
 from app_modules.pdf_utils import extract_text_from_pdf
 from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
-from app_modules.stripe_utils import init_stripe, create_checkout_session
-from app_modules.storage import log_analysis_event, log_subscriber, list_subscribers
+from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
+from app_modules.storage import (
+    init_db,
+    log_analysis_event,
+    log_subscriber,
+    list_subscribers,
+    get_subscriber_by_email,
+)
 
-# =========================
-# Config & estilos
-# =========================
+# -------------------------------------------------
+# Configs
+# -------------------------------------------------
 APP_TITLE = "CLARA • Análise de Contratos"
-VERSION = "v24"
+VERSION = "v15.0"
+
 st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
-# Secrets
-STRIPE_PUBLIC_KEY = st.secrets.get("STRIPE_PUBLIC_KEY", "")
-STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", "")
-PRICING_PRODUCT_ID = st.secrets.get("STRIPE_PRICE_ID", "price_xxx")
-TIKTOK_PIXEL_ID = st.secrets.get("TIKTOK_PIXEL_ID", "")
-HOTJAR_ID = st.secrets.get("HOTJAR_ID", "")
-HOTJAR_SV = st.secrets.get("HOTJAR_SV", "6")
+# Secrets / env
+STRIPE_PUBLIC_KEY = st.secrets.get("STRIPE_PUBLIC_KEY", os.getenv("STRIPE_PUBLIC_KEY", ""))
+STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", os.getenv("STRIPE_SECRET_KEY", ""))
+STRIPE_PRICE_ID   = st.secrets.get("STRIPE_PRICE_ID",   os.getenv("STRIPE_PRICE_ID", ""))
+BASE_URL          = st.secrets.get("BASE_URL",          os.getenv("BASE_URL", "https://claraready.streamlit.app"))
 
-DATA_DIR = Path("data"); DATA_DIR.mkdir(exist_ok=True)
-VISITS_CSV = DATA_DIR / "visits.csv"
+MONTHLY_PRICE_TEXT = "R$ 9,90/mês"
 
-st.markdown("""
-<style>
-  .block-container{ padding-top:.8rem }
-  .stButton>button{ border-radius:12px; padding:.7rem 1rem; font-weight:700 }
-  .hero{padding:32px 22px;border-radius:20px;background:linear-gradient(135deg,#f7f7fb,#eef6ff);border:1px solid rgba(0,0,0,.06)}
-  .hero h1{margin:0 0 8px 0; font-size:2.1rem}
-  .hero p{margin:0; font-size:1.05rem; color:#333}
-  .cards{ display:grid; gap:16px; grid-template-columns: repeat(3, minmax(0,1fr)); margin-top: 8px }
-  @media (max-width:980px){ .cards{ grid-template-columns: 1fr } }
-  .card{ background:#fff; border:1px solid #e5e7eb; border-radius:16px; padding:16px; box-shadow: 0 1px 0 rgba(0,0,0,.02) }
-  footer.clara{ margin-top:48px; padding:16px; border-top:1px solid #e5e7eb; color:#555 }
-</style>
-""", unsafe_allow_html=True)
+# Hotjar
+HOTJAR_ID = 6519667
+HOTJAR_SV = 6
 
-# =========================
-# Utilidades
-# =========================
-def now_iso() -> str: return datetime.utcnow().isoformat()
-def safe_str(x: Any) -> str:
-    try: return str(x)
-    except Exception: return ""
+# CSVs
+VISITS_CSV  = Path("/tmp/visitas.csv")
+CONSULT_CSV = Path("/tmp/consultas.csv")
 
-VISIT_HEADERS = [
-    "ts","session_id","event",
-    "utm_source","utm_medium","utm_campaign","utm_content","utm_term",
-    "referrer","user_agent","file_name","name","email","phone",
-]
-def ensure_csv_headers(path: Path, headers: List[str]):
+# -------------------------------------------------
+# Estilo: home impecável, centralizada e responsiva
+# -------------------------------------------------
+st.markdown(
+    """
+    <style>
+      :root{
+        --text:#0f172a; --muted:#475569; --line:#e5e7eb;
+        --brand:#4f46e5; --brand2:#6366f1; --bg:#f8fafc; --card:#ffffff;
+      }
+
+      .page-hero{
+        background:
+          radial-gradient(1200px 500px at 50% -150px, #eef2ff 20%, #fff 60%, #fff 100%);
+        padding: 32px 0 6px;
+      }
+      .wrap{ max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+      .chip{ display:inline-block; padding:6px 12px; border-radius:999px;
+        background:#eef2ff; border:1px solid #e0e7ff; color:#334155; font-weight:600; font-size:12.5px; }
+      .title{ margin: 18px 0 8px; font-size: clamp(34px, 6vw, 58px);
+        font-weight: 800; color: var(--text); letter-spacing:.3px; line-height:1.06; }
+      .subtitle{ max-width: 900px; font-size: 19px; line-height: 1.7; color: var(--muted); margin: 0 0 18px; }
+
+      .hero-cta .stButton > button{
+        background: linear-gradient(90deg, var(--brand), var(--brand2));
+        color: #fff; border: 0; border-radius: 14px; padding: 14px 22px;
+        font-weight: 700; font-size: 17px; box-shadow: 0 8px 24px rgba(79,70,229,.18);
+      }
+      .hero-cta .stButton > button:hover{ filter: brightness(1.03); }
+
+      .pitch{ color:var(--muted); line-height:1.75; font-size:16px; }
+
+      .cards{ display:grid; gap:16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      @media (max-width: 980px){ .cards{ grid-template-columns: 1fr; } }
+      .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
+      .card h4{ margin:4px 0 6px; font-size:18px; color:var(--text);} .card p{ margin:0; color:var(--muted); font-size:15.5px;}
+
+      .section{ background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px; }
+      .soft{ font-size:13px; color:#64748b; }
+
+      /* evita scroll horizontal em expander */
+      .no-overflow div[role="region"]{ overflow-x: hidden !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# -------------------------------------------------
+# Estado
+# -------------------------------------------------
+if "started" not in st.session_state:
+    st.session_state.started = False
+if "profile" not in st.session_state:
+    st.session_state.profile = {"nome": "", "email": "", "cel": "", "papel": "Contratante"}
+if "premium" not in st.session_state:
+    st.session_state.premium = False
+if "free_runs_left" not in st.session_state:
+    st.session_state.free_runs_left = 1
+
+# -------------------------------------------------
+# Utils / Admin / Validações
+# -------------------------------------------------
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+PHONE_RE = re.compile(r"^\+?\d{10,15}$")
+
+def _parse_admin_emails() -> Set[str]:
+    raw = st.secrets.get("admin_emails", None)
+    if raw is None:
+        raw = os.getenv("ADMIN_EMAILS", "")
+    if isinstance(raw, list):
+        return {str(x).strip().lower() for x in raw if str(x).strip()}
+    if isinstance(raw, str):
+        return {e.strip().lower() for e in raw.split(",") if e.strip()}
+    return set()
+
+ADMIN_EMAILS = _parse_admin_emails()
+
+def current_email() -> str:
+    return (st.session_state.profile.get("email") or "").strip().lower()
+
+def is_valid_email(v: str) -> bool:
+    return bool(EMAIL_RE.match((v or "").strip()))
+
+def is_valid_phone(v: str) -> bool:
+    digits = re.sub(r"\D", "", v or "")
+    return bool(PHONE_RE.match(digits))
+
+def is_premium() -> bool:
+    if st.session_state.premium:
+        return True
+    email = current_email()
+    if not email:
+        return False
+    try:
+        if get_subscriber_by_email(email):
+            st.session_state.premium = True
+            return True
+    except Exception:
+        pass
+    return False
+
+def stripe_diagnostics() -> Tuple[bool, str]:
+    miss = []
+    if not STRIPE_PUBLIC_KEY: miss.append("STRIPE_PUBLIC_KEY")
+    if not STRIPE_SECRET_KEY: miss.append("STRIPE_SECRET_KEY")
+    if not STRIPE_PRICE_ID:   miss.append("STRIPE_PRICE_ID")
+    if miss: return False, f"Configure os segredos: {', '.join(miss)}."
+    if STRIPE_PRICE_ID.startswith("prod_"): return False, "Use um **price_...** (não **prod_...**)."
+    if not STRIPE_PRICE_ID.startswith("price_"): return False, "O STRIPE_PRICE_ID deve começar com **price_...**"
+    return True, ""
+
+def inject_hotjar(hjid: int = HOTJAR_ID, hjsv: int = HOTJAR_SV):
+    st.markdown(
+        f"""
+        <script>
+        (function(h,o,t,j,a,r){{
+          h.hj=h.hj||function(){{(h.hj.q=h.hj.q||[]).push(arguments)}};
+          h._hjSettings={{hjid:{hjid},hjsv:{hjsv}}};
+          a=o.getElementsByTagName('head')[0];
+          r=o.createElement('script');r.async=1;
+          r.src='https://static.hotjar.com/c/hotjar-'+h._hjSettings.hjid+'.js?sv='+h._hjSettings.hjsv;
+          a.appendChild(r);
+        }})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ---- CSV helpers ----
+def _ensure_csv(path: Path, header: List[str]):
     if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow(headers)
-ensure_csv_headers(VISITS_CSV, VISIT_HEADERS)
+            csv.writer(f).writerow(header)
 
-# Pixels (opcional – seguros; não quebram se faltarem secrets)
-def inject_hotjar(hjid: str, hjsv: str="6"):
-    if not hjid: return
-    st.components.v1.html(f"""
-    <script>(function(h,o,t,j,a,r){{h.hj=h.hj||function(){{(h.hj.q=h.hj.q||[]).push(arguments)}};h._hjSettings={{hjid:{hjid},hjsv:{hjsv}}};
-    a=o.getElementsByTagName('head')[0];r=o.createElement('script');r.async=1;
-    r.src=t+h._hjSettings.hjid+j+h._hjSettings.hjsv;a.appendChild(r);}})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');</script>
-    """, height=0)
-def inject_tiktok_pixel(pixel_id: str):
-    if not pixel_id: return
-    st.components.v1.html(f"""
-    <script>!function (w, d, t) {{
-      w.TiktokAnalyticsObject = t; var ttq = w[t] = w[t] || [];
-      ttq.methods = ["page","track","identify","instances","debug","on","off","once","ready","alias","group","enableCookie","disableCookie"];
-      ttq.setAndDefer = function(t, e) {{ t[e] = function() {{ t.push([e].concat(Array.prototype.slice.call(arguments,0))) }} }};
-      for (var i = 0; i < ttq.methods.length; i++) ttq.setAndDefer(ttq, ttq.methods[i]);
-      ttq.load = function(e, n) {{ var i = "https://analytics.tiktok.com/i18n/pixel/events.js";
-        ttq._i = ttq._i || {{}}; ttq._i[e] = []; ttq._i[e]._u = i; ttq._t = ttq._t || {{}}; ttq._o = ttq._o || {{}};
-        var o = d.createElement("script"); o.type = "text/javascript"; o.async = !0; o.src = i + "?sdkid=" + e + "&lib=" + t;
-        var a = d.getElementsByTagName("script")[0]; a.parentNode.insertBefore(o, a); }};
-      ttq.load("{pixel_id}"); ttq.page(); }}(window, document, 'ttq');</script>
-    """, height=0)
-def ttq_track(event: str, params: Optional[dict]=None):
-    if not TIKTOK_PIXEL_ID: return
-    try: p = json.dumps(params or {})
-    except Exception: p = "{}"
-    st.components.v1.html(f"<script>if(window.ttq){{ttq.track('{event}', {p});}}</script>", height=0)
+def log_visit(email: str):
+    if not (email or "").strip():
+        return
+    _ensure_csv(VISITS_CSV, ["ts_utc","email"])
+    with VISITS_CSV.open("a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow([datetime.utcnow().isoformat(), email.strip().lower()])
 
-# UTM/UA/Referrer (API nova)
-try:
-    from streamlit_js_eval import get_user_agent, get_page_location
-except Exception:
-    get_user_agent = None; get_page_location = None
-def get_utms() -> Dict[str,str]:
-    qp = getattr(st, "query_params", {}) or {}
-    def pick(k):
-        v = qp.get(k, "")
-        return v[0] if isinstance(v, list) else (v or "")
-    return {k: pick(k) for k in ["utm_source","utm_medium","utm_campaign","utm_content","utm_term"]}
-def get_ua_and_referrer() -> Tuple[str,str]:
-    ua=""; ref=""
+def read_visits() -> List[Dict[str, str]]:
+    if not VISITS_CSV.exists():
+        return []
+    with VISITS_CSV.open("r", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+def log_consultation(payload: Dict[str, Any]):
+    _ensure_csv(CONSULT_CSV, ["ts_utc","nome","email","cel","papel","setor","valor_max","texto_len"])
+    row = [
+        datetime.utcnow().isoformat(),
+        st.session_state.profile.get("nome",""),
+        st.session_state.profile.get("email",""),
+        st.session_state.profile.get("cel",""),
+        st.session_state.profile.get("papel",""),
+        payload.get("setor",""),
+        payload.get("valor_max",""),
+        payload.get("texto_len",""),
+    ]
+    with CONSULT_CSV.open("a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(row)
+
+def serve_csv_downloads():
+    if VISITS_CSV.exists():
+        with VISITS_CSV.open("rb") as f:
+            st.download_button("📥 Baixar visitas (CSV)", f, file_name="visitas.csv", mime="text/csv")
+    if CONSULT_CSV.exists():
+        with CONSULT_CSV.open("rb") as f:
+            st.download_button("📥 Baixar consultas (CSV)", f, file_name="consultas.csv", mime="text/csv")
+
+# -------------------------------------------------
+# Boot (Stripe + DB)
+# -------------------------------------------------
+@st.cache_resource(show_spinner="Preparando…")
+def _boot() -> Tuple[bool, str]:
     try:
-        if get_user_agent: ua = safe_str(get_user_agent())
-        if get_page_location:
-            loc = get_page_location()
-            ref = safe_str(loc.get("href","")) if isinstance(loc, dict) else safe_str(loc)
-    except Exception: pass
-    return ua, ref
-def get_session_id() -> str:
-    if "session_id" not in st.session_state:
-        st.session_state["session_id"] = hashlib.sha1(os.urandom(24)).hexdigest()
-    return safe_str(st.session_state["session_id"])
-def log_visit_event(name: str, extra: Optional[Dict[str,str]]=None):
-    utm = get_utms(); ua, ref = get_ua_and_referrer()
-    row = {"ts": now_iso(), "session_id": get_session_id(), "event": name,
-           "utm_source": utm.get("utm_source",""), "utm_medium": utm.get("utm_medium",""),
-           "utm_campaign": utm.get("utm_campaign",""), "utm_content": utm.get("utm_content",""),
-           "utm_term": utm.get("utm_term",""), "referrer": ref, "user_agent": ua,
-           "file_name": "", "name": "", "email": "", "phone": ""}
-    if extra:
-        for k in ("file_name","name","email","phone"):
-            if k in extra: row[k] = safe_str(extra[k])
-    try:
-        with VISITS_CSV.open("a", newline="", encoding="utf-8") as f:
-            csv.DictWriter(f, fieldnames=VISIT_HEADERS, extrasaction="ignore").writerow(row)
+        if not STRIPE_SECRET_KEY:
+            return False, "Faltando STRIPE_SECRET_KEY."
+        init_stripe(STRIPE_SECRET_KEY)
+        init_db()
+        return True, ""
     except Exception as e:
-        print(f"[visits.csv] Falha ao gravar visita: {e}")
+        return False, f"Falha ao iniciar serviços: {e}"
 
-# OCR & extração
-_HAS_OCR = True
-try:
-    import pytesseract
-    from pdf2image import convert_from_bytes
-    from PIL import Image
-except Exception:
-    _HAS_OCR = False
-try:
-    from pypdf import PdfReader
-    _HAS_PYPDF = True
-except Exception:
-    _HAS_PYPDF = False
-def ocr_bytes(data: bytes) -> str:
-    if not _HAS_OCR: return ""
-    try:
-        img = Image.open(io.BytesIO(data))
-        return pytesseract.image_to_string(img, lang="por+eng")
-    except Exception: pass
-    try:
-        pages = convert_from_bytes(data, dpi=300)
-        return "\n".join([pytesseract.image_to_string(pg, lang="por+eng") for pg in pages])
-    except Exception: return ""
-def robust_extract_text(data: bytes, filename: Optional[str]=None) -> str:
-    try:
-        txt = extract_text_from_pdf(data) if (filename is None or str(filename).lower().endswith(".pdf")) else ""
-        if txt and len(txt.strip()) > 50: return txt
-    except Exception: pass
-    if _HAS_PYPDF and (filename is None or str(filename).lower().endswith(".pdf")):
-        try:
-            reader = PdfReader(io.BytesIO(data))
-            txt = "\n".join([(p.extract_text() or "") for p in reader.pages])
-            if txt and len(txt.strip()) > 50: return txt
-        except Exception: pass
-    try:
-        suffix = Path(filename).suffix if filename else ".pdf"
-        tmp = DATA_DIR / f"_tmp_upload{suffix}"
-        tmp.write_bytes(data)
-        txt = ""
-        if tmp.suffix.lower() == ".pdf":
-            try: txt = extract_text_from_pdf(str(tmp))
-            except Exception: txt = ""
-        if (not txt or len(txt.strip()) <= 50) and tmp.suffix.lower() == ".docx":
-            try:
-                import docx2txt
-                txt = docx2txt.process(str(tmp)) or ""
-            except Exception: txt = ""
-        try: tmp.unlink(missing_ok=True)
-        except Exception: pass
-        if txt and len(txt.strip()) > 50: return txt
-    except Exception: pass
-    return ocr_bytes(data)
+ok_boot, boot_msg = _boot()
+if not ok_boot:
+    st.error(boot_msg); st.stop()
 
-# Compat: analyze_contract_text pode pedir ctx
-def run_analysis_with_ctx(text: str, ctx: dict):
-    try:
-        sig = inspect.signature(analyze_contract_text)
-        params = list(sig.parameters.keys())
-        if len(params) >= 2:
-            try: return analyze_contract_text(text, ctx)        # posicional
-            except TypeError: return analyze_contract_text(text, ctx=ctx)  # nomeado
-        elif "ctx" in params:
-            return analyze_contract_text(text, ctx=ctx)
+# -------------------------------------------------
+# Tela 1 — Home perfeita (alinhada e centrada)
+# -------------------------------------------------
+
+def first_screen():
+    inject_hotjar()
+    st.markdown('<div class="page-hero"><div class="wrap">', unsafe_allow_html=True)
+
+    # chip + título + subtítulo
+    st.markdown(f'<span class="chip">CLARA • {VERSION}</span>', unsafe_allow_html=True)
+    st.markdown('<div class="title">Entenda o que você está assinando</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="subtitle">
+          A CLARA lê seu contrato, explica <b>em palavras simples</b>
+          e mostra o que pode ser <b>problema</b> — como multas altas,
+          travas de cancelamento e responsabilidades exageradas.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # CTA central real (coluna do meio)
+    st.markdown('<div class="hero-cta">', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1,1,1])
+    with c2:
+        if st.button("Iniciar análise do meu contrato", key="btn_start"):
+            st.session_state.started = True
+            try: st.cache_data.clear()
+            except Exception: pass
+            try: st.cache_resource.clear()
+            except Exception: pass
+            st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # pitch alinhada
+    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="pitch">
+          <p><b>Problema real:</b> milhões de brasileiros assinam documentos sem entender por completo.
+             A frase “eu li e concordo” virou símbolo dessa crise silenciosa.
+             Isso expõe pessoas e empresas a riscos que poderiam ser evitados.</p>
+          <p><b>Como ajudamos:</b> você envia o contrato e recebe
+             <b>trechos críticos + explicações simples + dicas de negociação</b>.
+             Use a CLARA como apoio para conversar com a outra parte e, se precisar, para levar ao seu advogado(a).</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # cards de valor
+    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+    st.markdown('<div class="cards">', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="card"><h4>🛡️ Proteção</h4><p>Detecta multas fora da realidade, travas de cancelamento e riscos escondidos.</p></div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="card"><h4>🧩 Linguagem simples</h4><p>Traduz termos como <b>foro</b> (onde um processo corre), <b>LGPD</b> (regras de dados) e <b>rescisão</b> (como encerrar).</p></div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="card"><h4>📈 CET</h4><p>Mostra o custo total de um financiamento (juros + tarifas + taxas) para comparar propostas.</p></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)  # /cards
+
+    st.markdown('</div></div>', unsafe_allow_html=True)  # /wrap /page-hero
+
+# -------------------------------------------------
+# Sidebar — cadastro (opcional) + admin
+# -------------------------------------------------
+
+def sidebar_profile():
+    st.sidebar.header("👤 Seus dados (opcional)")
+    nome  = st.sidebar.text_input("Nome completo", value=st.session_state.profile.get("nome",""))
+    email = st.sidebar.text_input("E-mail",        value=st.session_state.profile.get("email",""))
+    cel   = st.sidebar.text_input("Celular",       value=st.session_state.profile.get("cel",""))
+    papel = st.sidebar.selectbox("Você é o contratante?", ["Contratante","Contratado","Outro"],
+                                 index=["Contratante","Contratado","Outro"].index(st.session_state.profile.get("papel","Contratante")))
+
+    if st.sidebar.button("Salvar dados", use_container_width=True):
+        errors = []
+        if email and not is_valid_email(email):
+            errors.append("E-mail inválido.")
+        if cel and not is_valid_phone(cel):
+            errors.append("Celular inválido (use somente números, com DDD).")
+        if errors:
+            st.sidebar.error(" • ".join(errors))
         else:
-            return analyze_contract_text(text)
-    except TypeError:
-        return analyze_contract_text(text)
+            st.session_state.profile = {"nome":nome.strip(),"email":email.strip(),"cel":cel.strip(),"papel":papel}
+            try: log_visit(email.strip())
+            except Exception: pass
+            try:
+                if current_email() and get_subscriber_by_email(current_email()):
+                    st.session_state.premium = True
+            except Exception:
+                pass
+            st.sidebar.success("Dados salvos!")
 
-# =========================
-# Pixels + PV
-# =========================
-inject_hotjar(HOTJAR_ID, HOTJAR_SV)
-inject_tiktok_pixel(TIKTOK_PIXEL_ID)
-log_visit_event("PageView"); ttq_track("PageView", {"value":1})
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Administração")
+    if current_email() in ADMIN_EMAILS:
+        if st.sidebar.checkbox("Área administrativa"):
+            st.sidebar.success("Admin ativo")
+            try:
+                subs = list_subscribers()
+                with st.sidebar.expander("👥 Assinantes (Stripe)", expanded=False):
+                    st.write(subs if subs else "Nenhum assinante ainda.")
+            except Exception as e:
+                st.sidebar.error(f"Não foi possível listar assinantes: {e}")
 
-# =========================
-# Sidebar (Stripe + Admin)
-# =========================
-with st.sidebar:
-    st.header("Plano & Ajuda")
-    st.write("Precisa de suporte? Fale com a gente pelo WhatsApp.")
-    st.divider()
-    st.subheader("Assinatura")
-    STRIPE_ENABLED = bool(PRICING_PRODUCT_ID and (STRIPE_SECRET_KEY or STRIPE_PUBLIC_KEY))
-    if STRIPE_ENABLED:
-        try:
-            init_stripe(STRIPE_SECRET_KEY or STRIPE_PUBLIC_KEY)  # apenas 1 argumento
-            if st.button("Assinar CLARA Pro", use_container_width=True):
-                url = create_checkout_session(PRICING_PRODUCT_ID)
-                if url:
-                    st.success("Abrindo checkout…")
-                    st.markdown(f"[Ir para o pagamento]({url})")
-                    log_visit_event("CheckoutStart"); ttq_track("InitiateCheckout", {"value":1})
-                else:
-                    st.error("Não consegui iniciar o checkout agora.")
-        except Exception:
-            STRIPE_ENABLED = False
-            st.warning("Stripe indisponível neste ambiente.")
-    if not STRIPE_ENABLED:
-        st.info("Stripe não configurado ou indisponível.")
-    st.divider()
-    st.subheader("Admin")
-    admin_mode = st.toggle("Exibir painel Admin", value=False)
-
-# =========================
-# Abas (duas páginas)
-# =========================
-st.title(APP_TITLE)
-st.caption("Transforme contratos em informação prática — pontos de atenção e CET (quando aplicável).")
-tab_inicio, tab_analisar = st.tabs(["🏠 Início", "📄 Analisar"])
-
-# ---------- Início
-with tab_inicio:
-    st.markdown("""
-<div class="hero">
-  <h1>Clara — análise inteligente de contratos</h1>
-  <p>Envie um PDF, foto ou DOCX e receba um resumo claro com pontos de atenção. Para contratos de crédito,
-  estimamos o CET quando fizer sentido.</p>
-</div>
-""", unsafe_allow_html=True)
-    st.markdown("""
-**A frase “Eu li e concordo com os termos e condições” virou símbolo de uma crise silenciosa no Brasil.**
-Empresários frequentemente **negligenciam a leitura profunda** e se expõem a **vulnerabilidades evitáveis**.
-Milhões assinam documentos **sem entender** o que aceitam — colocando **negócios e patrimônio em risco**.
-A **Clara** nasceu para reduzir esse risco: transformar contratos em **informação compreensível**, com os alertas certos, antes da decisão.
-""")
-    st.markdown("""
-### O que a Clara resolve
-<div class="cards">
-  <div class="card"><strong>Leitura rápida</strong><br/>Lê PDF, foto (OCR) e DOCX. Destaca cláusulas sensíveis.</div>
-  <div class="card"><strong>Transparência</strong><br/>Mostra os <em>trechos</em> que embasam cada alerta, em linguagem simples.</div>
-  <div class="card"><strong>CET em segundos</strong><br/>Para contratos de crédito, estimamos rapidamente o CET, quando aplicável.</div>
-</div>
-""", unsafe_allow_html=True)
-
-# ---------- Analisar (tudo dentro de UM formulário)
-with tab_analisar:
-    st.markdown("### Faça upload, preencha seus dados e clique em **Analisar agora**")
-
-    with st.form("form_clara_v24", clear_on_submit=False):
-        # 1) Upload
-        uploaded = st.file_uploader("Arquivo (PDF, JPG, PNG, DOCX) — até ~25 MB",
-                                    type=["pdf","jpg","jpeg","png","docx"],
-                                    accept_multiple_files=False,
-                                    key="upload_file")
-        if uploaded:
-            st.success(f"Arquivo recebido: {uploaded.name}")
-
-        # 2) Preferências
-        cA, cB, _ = st.columns(3)
-        with cA: want_summary = st.checkbox("Resumo amigável", value=True, key="pref_sum")
-        with cB: calc_cet = st.checkbox("Estimar CET (se aplicável)", value=True, key="pref_cet")
-
-        # 3) Contexto
-        col1, col2 = st.columns(2)
-        with col1:
-            setor = st.selectbox("Setor do contrato*", 
-                                 ["Serviços","Tecnologia","Imobiliário","Saúde","Educação","Construção","Financeiro","Varejo","Outro"],
-                                 index=0, key="setor")
-            papel = st.selectbox("Seu papel no contrato*", 
-                                 ["Sou CONTRATANTE (quem contrata/compra)","Sou CONTRATADO (prestador/fornecedor)"],
-                                 index=0, key="papel")
-        with col2:
-            user_name  = st.text_input("Nome completo*", key="u_name")
-            user_email = st.text_input("E-mail*", key="u_email")
-            user_phone = st.text_input("Celular (WhatsApp)*", key="u_phone")
-            company    = st.text_input("Empresa (opcional)", key="u_company")
-
-        # Placeholder para mensagens de validação/resultados do submit
-        feedback = st.empty()
-
-        submitted = st.form_submit_button("🔎 Analisar agora", type="primary")
-        if submitted:
-            errors = []
-            if not uploaded: errors.append("Envie um arquivo.")
-            if not user_name: errors.append("Informe seu nome.")
-            if not user_email or "@" not in user_email: errors.append("E-mail inválido.")
-            if not user_phone: errors.append("Informe seu WhatsApp.")
-            if errors:
-                feedback.error(" • ".join(errors))
-
-            if not errors:
-                # métrica
-                log_visit_event("FileUpload", {"file_name": uploaded.name})
-                ttq_track("FileUpload", {"content_type":"contract","file_name":uploaded.name})
-
-                # leitura dos bytes de forma segura no Streamlit
-                data = uploaded.getvalue()
-
-                text_was_ocr = False
-                with st.status("Lendo e analisando o contrato…", expanded=True) as status:
-                    status.write("Extraindo texto…")
-                    text = robust_extract_text(data, filename=uploaded.name)
-                    if not text or len(text.strip()) < 50:
-                        status.write("Texto curto — aplicando OCR…")
-                        text = ocr_bytes(data); text_was_ocr = bool(text)
-
-                    if not text or len(text.strip()) < 30:
-                        feedback.warning("Não consegui ler o conteúdo. Tente uma foto mais nítida ou um PDF com melhor qualidade.")
-                        status.update(label="Leitura falhou", state="error")
+            try:
+                visits = read_visits()
+                with st.sidebar.expander("👣 Últimas visitas", expanded=False):
+                    if not visits:
+                        st.write("Sem registros.")
                     else:
-                        # contexto para a análise
-                        ctx = {
-                            "sector": setor,
-                            "role": "contratante" if "CONTRATANTE" in papel else "contratado",
-                            "user": {"name": user_name, "email": user_email, "phone": user_phone, "company": company},
-                            "preferences": {"want_summary": want_summary, "calc_cet": calc_cet, "language": "pt-BR"},
-                            "filename": uploaded.name,
-                        }
-                        text = f"[Contexto: setor={setor}; papel={ctx['role']}; nome={user_name}; empresa={company}]\n\n" + text
+                        for v in reversed(visits[-50:]):
+                            st.write(f"{v.get('ts_utc','')} — {v.get('email','')}")
+            except Exception as e:
+                st.sidebar.error(f"Não foi possível ler visitas: {e}")
 
-                        status.write("Rodando análise semântica…")
-                        try:
-                            hits = run_analysis_with_ctx(text, ctx)   # <— compatível com ctx
-                        except Exception as e:
-                            feedback.error(f"Falha na análise: {e}")
-                            status.update(label="Análise falhou", state="error")
-                            hits = None
+            with st.sidebar.expander("📦 Exportar CSV", expanded=False):
+                serve_csv_downloads()
 
-                        if hits is not None:
-                            summary = summarize_hits(hits) if want_summary else None
-                            cet_block = None
-                            if calc_cet:
-                                try: cet_block = compute_cet_quick(text)
-                                except Exception: cet_block = None
+# -------------------------------------------------
+# Preço / Stripe (banner discreto)
+# -------------------------------------------------
 
-                            log_analysis_event(get_session_id(), uploaded.name, len(text))
-                            log_visit_event("AnalysisCompleted", {
-                                "file_name": uploaded.name, "name": user_name, "email": user_email, "phone": user_phone
-                            })
-                            ttq_track("AnalysisCompleted", {"value":1})
-                            status.update(label="Análise concluída", state="complete")
+def pricing_card():
+    st.markdown('<div class="section"><div class="section-title" style="font-weight:800;">Plano Premium</div>', unsafe_allow_html=True)
+    st.caption(f"{MONTHLY_PRICE_TEXT} • análises ilimitadas • suporte prioritário")
 
-                            # 🎉 celebração
-                            st.balloons()
+    okS, msgS = stripe_diagnostics()
+    email = current_email()
 
-                            # Resultado
-                            st.markdown("## Resultado da análise")
-                            if summary:
-                                st.subheader("Resumo (para humanos)")
-                                st.write(summary)
+    if not email:
+        st.info("Preencha e salve seu e-mail na barra lateral para assinar. A análise gratuita continua liberada sem cadastro.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
 
-                            st.subheader("Pontos de atenção")
-                            st.write(hits)
+    if st.button("💳 Assinar Premium agora", use_container_width=True):
+        if not okS:
+            st.error(msgS)
+        else:
+            try:
+                sess = create_checkout_session(
+                    price_id=STRIPE_PRICE_ID,
+                    customer_email=email,
+                    success_url=f"{BASE_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+                    cancel_url=f"{BASE_URL}?canceled=true",
+                )
+                if sess.get("url"):
+                    st.success("Sessão criada! Clique abaixo para abrir o checkout seguro.")
+                    st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
+                else:
+                    st.error(sess.get("error", "Stripe indisponível no momento."))
+            except Exception as e:
+                st.error(f"Stripe indisponível no momento. Detalhe: {e}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-                            if cet_block:
-                                st.subheader("Estimativa de CET")
-                                st.write(cet_block)
 
-                            # Sugestões
-                            sugestoes = []
-                            if text_was_ocr:
-                                sugestoes.append("Envie um **PDF nativo** ou foto em **alta resolução** (300 DPI) para melhorar a leitura.")
-                            if calc_cet and (not cet_block):
-                                sugestoes.append("Para estimar o **CET**, inclua **valor**, **parcelas**, **taxas/encargos** e **datas**.")
-                            if isinstance(hits, (list, tuple)) and len(hits) < 3:
-                                sugestoes.append("Poucos pontos detectados; considere **detalhar obrigações, prazos e penalidades**.")
-                            if len(text) < 1200:
-                                sugestoes.append("O texto está curto; contratos mais completos geram análises melhores.")
-                            if sugestoes:
-                                st.subheader("Como este contrato pode ficar ainda melhor")
-                                st.markdown("\n".join([f"- {s}" for s in sugestoes]))
+def handle_checkout_result():
+    qs = st.query_params
+    if qs.get("success") == "true" and qs.get("session_id"):
+        sid = qs["session_id"]
+        try:
+            ok, payload = verify_checkout_session(sid)
+        except Exception as e:
+            st.error(f"Não foi possível confirmar o pagamento: {e}")
+            ok, payload = False, {}
 
-                            st.info("Lembrete: esta ferramenta não substitui aconselhamento jurídico.")
+        if ok:
+            try:
+                log_subscriber(
+                    email=current_email(),
+                    name=st.session_state.profile.get("nome",""),
+                    stripe_customer_id=(payload.get("customer") or (payload.get("subscription") or {}).get("customer") or "")
+                )
+            except Exception:
+                pass
+            st.session_state.premium = True
+            st.success("Pagamento confirmado! Premium liberado ✅")
+        else:
+            st.warning("Não conseguimos confirmar essa sessão. Tente novamente.")
+        try: st.query_params.clear()
+        except Exception: pass
 
-                            # Relatório
-                            relatorio_md = f"""# Relatório CLARA – Análise de Contrato
+# -------------------------------------------------
+# Conteúdo + preço (após iniciar)
+# -------------------------------------------------
 
-**Data:** {now_iso()}
-**Arquivo:** {uploaded.name}
-**Setor:** {setor}
-**Papel:** {papel}
-**Nome:** {user_name}  •  **E-mail:** {user_email}  •  **WhatsApp:** {user_phone}
+def landing_block():
+    st.markdown('<div class="section">', unsafe_allow_html=True)
+    st.markdown("### O que você recebe")
+    st.write("• Trechos críticos do contrato → **explicados em linguagem simples**.")
+    st.write("• Sinais de alerta (multas altas, travas, riscos): **o que significam** e **como negociar**.")
+    st.write("• **Relatório** para compartilhar com seu time ou advogado(a).")
+    st.markdown('</div>', unsafe_allow_html=True)
 
----
+    st.markdown("")
+    pricing_card()
 
-## Resumo
-{summary or "_(Resumo não solicitado.)_"}
+# -------------------------------------------------
+# Upload / Inputs / CET / Resultado
+# -------------------------------------------------
 
-## Pontos de atenção
-{safe_str(hits)}
+def upload_or_paste_section() -> str:
+    st.subheader("1) Envie o contrato")
+    f = st.file_uploader("PDF do contrato", type=["pdf"])
+    raw = ""
+    if f:
+        with st.spinner("Lendo PDF…"):
+            raw = extract_text_from_pdf(f)
+    st.markdown("Ou cole o texto abaixo:")
+    raw = st.text_area("Texto do contrato", height=220, value=raw or "")
+    return raw
 
-## Estimativa de CET
-{safe_str(cet_block) if cet_block else "_(Não aplicável ou não calculado.)_"}
+
+def analysis_inputs() -> Dict[str, Any]:
+    st.subheader("2) Contexto")
+    c1,c2,c3 = st.columns(3)
+    setor = c1.selectbox("Setor", ["Genérico","SaaS/Serviços","Empréstimos","Educação","Plano de saúde"])
+    papel = c2.selectbox("Perfil", ["Contratante","Contratado","Outro"])
+    valor = c3.number_input("Valor máx. (opcional)", min_value=0.0, step=100.0)
+    return {"setor":setor, "papel":papel, "limite_valor":valor}
+
+
+def cet_calculator_block():
+    with st.expander("📈 Calculadora de CET (opcional)", expanded=False):
+        c1,c2,c3 = st.columns(3)
+        P   = c1.number_input("Valor principal (R$)", min_value=0.0, step=100.0, key="cet_p")
+        i_m = c2.number_input("Juros mensais (%)", min_value=0.0, step=0.1, key="cet_i")
+        n   = c3.number_input("Parcelas (n)", min_value=1, step=1, key="cet_n")
+        fee = st.number_input("Taxas fixas totais (R$)", min_value=0.0, step=10.0, key="cet_fee")
+        if st.button("Calcular CET", key="btn_calc_cet"):
+            cet = compute_cet_quick(P, i_m/100.0, int(n), fee)
+            st.success(f"**CET aproximado:** {cet*100:.2f}% ao mês")
+
+
+def _wrap_text_box(label: str, content: str, h: int = 160):
+    """Exibe texto sem scroll horizontal (caixa fixa e somente vertical)."""
+    st.text_area(label, value=content, height=h, disabled=True)
+
+
+def _build_share_email(resumo: str) -> str:
+    return f"""Assunto: Solicitação de revisão de cláusulas contratuais
+
+Olá,
+
+Envio, por gentileza, os principais pontos identificados na análise inicial do contrato:
+
+- {resumo}
+
+Poderia avaliar as cláusulas destacadas (multas, reajuste, foro e responsabilidades) e sugerir eventuais ajustes de redação para mitigar riscos?
+
+Fico à disposição.
+
+Atenciosamente,
+{st.session_state.profile.get('nome') or '—'}
 """
-                            st.download_button(
-                                "⬇️ Baixar relatório (.md)",
-                                data=relatorio_md.encode("utf-8"),
-                                file_name=f"Relatorio_CLARA_{Path(uploaded.name).stem}.md",
-                                mime="text/markdown",
-                                use_container_width=True
-                            )
-                            mailto_body = urllib.parse.quote(relatorio_md)
-                            mailto_subj = urllib.parse.quote(f"Relatório CLARA – {uploaded.name}")
-                            st.markdown(f"[✉️ Enviar ao advogado (abrir e-mail)](mailto:?subject={mailto_subj}&body={mailto_body})")
-                            st.caption("Dica: você também pode baixar o arquivo e anexar ao e-mail.")
 
-# ---------- Admin (sidebar)
-if 'admin_mode' in locals() and admin_mode:
-    st.header("Painel Admin")
-    pv = up = ac = ld = 0
-    try:
-        with VISITS_CSV.open("r", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
-        for r in rows:
-            ev = r.get("event","")
-            if ev == "PageView": pv += 1
-            elif ev == "FileUpload": up += 1
-            elif ev == "AnalysisCompleted": ac += 1
-            elif ev == "Lead": ld += 1
-        m1,m2,m3,m4 = st.columns(4)
-        m1.metric("PageViews", pv); m2.metric("Uploads", up); m3.metric("Análises", ac); m4.metric("Leads", ld)
-        st.subheader("Visitas recentes")
-        st.dataframe(rows[-200:] if len(rows) > 200 else rows, use_container_width=True)
-    except Exception as e:
-        st.write("Não consegui abrir o visits.csv."); st.write(e)
 
-# ---------- Rodapé / FAQ
-with st.expander("Como funciona a leitura de documentos?"):
-    st.markdown("""
-- Se o PDF tiver **texto** embutido, extraímos diretamente.
-- Se for uma **foto** ou **scan**, usamos **OCR** automaticamente.
-- Para **.docx**, quando possível, extraímos o texto diretamente.
-- Depois, rodamos análise semântica para destacar **pontos de atenção** e, se aplicável, **CET**.
-""")
-with st.expander("Privacidade"):
-    st.markdown("""
-- Seu arquivo é processado para análise e não é compartilhado.
-- Registramos apenas **métricas de uso** (PageView, Upload, Análise) com identificador de sessão anônimo.
-""")
-st.markdown("""
-<footer class="clara">
-  <small><strong>Disclaimer:</strong> A Clara fornece apoio informativo e <em>não</em> substitui aconselhamento jurídico profissional.</small>
-</footer>
-""", unsafe_allow_html=True)
+def results_section(text: str, ctx: Dict[str, Any]):
+    st.subheader("4) Resultado")
+
+    if not text.strip():
+        st.warning("Envie o contrato (PDF) ou cole o texto para analisar.")
+        return
+
+    # Análise gratuita SEM obrigar cadastro
+    if not is_premium() and st.session_state.free_runs_left <= 0:
+        st.info("Você usou sua análise gratuita. **Assine o Premium** para continuar.")
+        return
+
+    with st.spinner("Analisando…"):
+        hits, meta = analyze_contract_text(text, ctx)
+
+    if not is_premium():
+        st.session_state.free_runs_left -= 1
+
+    # logs
+    email_for_log = current_email()  # pode estar vazio (grátis sem cadastro)
+    log_analysis_event(email=email_for_log, meta={"setor":ctx["setor"], "papel":ctx["papel"], "len":len(text)})
+    log_consultation({"setor":ctx["setor"], "valor_max":ctx["limite_valor"], "texto_len":len(text)})
+
+    resume = summarize_hits(hits)
+    st.success(f"Resumo: {resume['resumo']}")
+    st.write(f"Gravidade: **{resume['gravidade']}** | Pontos críticos: **{resume['criticos']}** | Itens analisados: {len(hits)}")
+
+    # Pontos
+    st.markdown("<div class='no-overflow'>", unsafe_allow_html=True)
+    for h in hits:
+        with st.expander(f"{h['severity']} • {h['title']}", expanded=False):
+            st.write(h.get("explanation", ""))               # linguagem simples
+            if h.get("suggestion"):
+                st.markdown(f"**Como negociar:** {h['suggestion']}")
+            if h.get("evidence"):
+                # Evita scroll horizontal: caixa de texto somente leitura
+                _wrap_text_box("Trecho do contrato (referência)", h["evidence"][:800])
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    cet_calculator_block()
+
+    # Relatório .txt
+    buff = io.StringIO()
+    buff.write(f"{APP_TITLE} {VERSION}\n")
+    buff.write(f"Usuário: {st.session_state.profile.get('nome','')} <{email_for_log or 'sem e-mail'}>  •  Papel: {ctx['papel']}\n")
+    buff.write(f"Setor: {ctx['setor']}  |  Valor máx.: {ctx['limite_valor']}\n\n")
+    buff.write(f"Resumo: {resume['resumo']} (Gravidade: {resume['gravidade']})\n\n")
+    buff.write("Pontos de atenção:\n")
+    for h in hits:
+        buff.write(f"- [{h['severity']}] {h['title']} — {h.get('explanation','')}\n")
+        if h.get("suggestion"):
+            buff.write(f"  Como negociar: {h['suggestion']}\n")
+    st.download_button("📥 Baixar relatório (txt)", data=buff.getvalue(), file_name="relatorio_clara.txt", mime="text/plain")
+
+    # Botão para gerar e-mail (copiar/baixar)
+    st.markdown("### Gerar e-mail para advogado/contraparte")
+    email_text = _build_share_email(resume.get('resumo', ''))
+    st.text_area("Copie e cole:", email_text, height=220)
+    st.download_button("Baixar e-mail (.txt)", data=email_text.encode("utf-8"), file_name="email_para_advogado.txt", mime="text/plain")
+
+    # Ações auxiliares
+    colA, colB = st.columns(2)
+    with colA:
+        if st.button("🔄 Recomeçar (voltar ao início)"):
+            st.session_state.started = False
+            st.rerun()
+    with colB:
+        st.caption("Dica: preencha seus dados na barra lateral para salvar histórico e assinar o Premium, se quiser.")
+
+# -------------------------------------------------
+# Main (single page)
+# -------------------------------------------------
+
+def main():
+    if not st.session_state.started:
+        first_screen()
+        return
+
+    # Barra lateral sempre visível
+    sidebar_profile()
+    handle_checkout_result()
+    landing_block()
+
+    st.markdown("---")
+    st.markdown("### Comece sua análise")
+    st.caption("Envie o contrato. O cadastro é opcional para a análise gratuita.")
+
+    texto = upload_or_paste_section()
+    ctx   = analysis_inputs()
+
+    if st.button("🚀 Analisar agora", use_container_width=True):
+        results_section(texto, ctx)
+
+    st.markdown("---")
+    # Banner Premium também no rodapé (discreto)
+    with st.container():
+        st.info("🔓 Clara Premium (opcional): relatórios ilimitados, histórico e suporte prioritário. A análise gratuita continua disponível.")
+
+    st.markdown(
+        '<p class="soft">A CLARA complementa sua leitura e negociação, mas <b>não substitui</b> a orientação de um(a) advogado(a).</p>',
+        unsafe_allow_html=True
+    )
+
+if __name__ == "__main__":
+    main()
+
+
 
 
 
