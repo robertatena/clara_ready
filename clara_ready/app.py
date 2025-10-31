@@ -10,6 +10,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, Tuple, Set, List
 import streamlit as st
+from PIL import Image
+import base64
 
 # ---- módulos locais ----
 from app_modules.pdf_utils import extract_text_from_pdf
@@ -178,6 +180,19 @@ st.markdown(
         border-left: 4px solid var(--clara-danger);
         background: #fef2f2;
     }
+    
+    .logo-container {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    
+    .logo-text {
+        font-family: 'Raleway', sans-serif;
+        font-weight: 600;
+        color: var(--clara-gold);
+        font-size: 1.8rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -198,6 +213,8 @@ if "service_data" not in st.session_state:
     st.session_state.service_data = {}
 if "active_service" not in st.session_state:
     st.session_state.active_service = None
+if "user_authenticated" not in st.session_state:
+    st.session_state.user_authenticated = False
 
 # -------------------------------------------------
 # Serviços - Casos Campeões
@@ -279,6 +296,17 @@ SERVICES = {
             "Configure a análise",
             "Revise os resultados"
         ]
+    },
+    "entender_editais": {
+        "title": "📑 Entender Editais",
+        "icon": "📑",
+        "description": "Simplifique a compreensão de editais públicos e licitações",
+        "category": "Jurídico",
+        "steps": [
+            "Envie o edital",
+            "Configure as áreas de interesse",
+            "Obtenha um resumo claro"
+        ]
     }
 }
 
@@ -301,6 +329,16 @@ def is_valid_phone(v: str) -> bool:
 def is_premium() -> bool:
     return st.session_state.premium
 
+def render_logo():
+    """Renderiza o logo da CLARA"""
+    st.markdown("""
+    <div class="logo-container">
+        <div class="logo-text">CLARA LAW</div>
+    </div>
+    <p style="color: var(--clara-blue); margin-top: -10px; font-size: 0.9rem;">
+    Inteligência para um mundo mais claro</p>
+    """, unsafe_allow_html=True)
+
 # -------------------------------------------------
 # Templates de Documentos
 # -------------------------------------------------
@@ -309,17 +347,17 @@ def generate_cancellation_letter(service_data: Dict) -> str:
 CARTA DE CANCELAMENTO - {service_data.get('servico', '').upper()}
 
 De: {service_data.get('nome', '')}
-E-mail: {service_data.get('email', '')
+E-mail: {service_data.get('email', '')}
 CPF: {service_data.get('cpf', '')}
 
 Para: {service_data.get('empresa', '')}
 CNPJ: {service_data.get('cnpj', '')}
 
-Assunto: Cancelamento de assinatura/service_data
+Assunto: Cancelamento de assinatura/serviço
 
 Prezados Senhores,
 
-Venho por meio desta comunicar o CANCELAMENTO imediato da assinatura/service_data contratado junto à empresa {service_data.get('empresa', '')}, referente ao serviço: {service_data.get('servico', '')}.
+Venho por meio desta comunicar o CANCELAMENTO imediato da assinatura/serviço contratado junto à empresa {service_data.get('empresa', '')}, referente ao serviço: {service_data.get('servico', '')}.
 
 DADOS DO CONTRATO:
 - Número do contrato: {service_data.get('numero_contrato', 'Não informado')}
@@ -416,30 +454,112 @@ Atenciosamente,
 {service_data.get('nome', '')}
 """
 
+def generate_utility_complaint(service_data: Dict) -> str:
+    return f"""
+RECLAMAÇÃO - {service_data.get('concessionaria', '').upper()}
+
+DADOS DO CLIENTE:
+Nome: {service_data.get('nome', '')}
+CPF: {service_data.get('cpf', '')}
+E-mail: {service_data.get('email', '')}
+Telefone: {service_data.get('telefone', '')}
+Endereço: {service_data.get('endereco', '')}
+
+DADOS DO SERVIÇO:
+Concessionária: {service_data.get('concessionaria', '')}
+Tipo de Serviço: {service_data.get('tipo_conta', '')}
+Número da Conta: {service_data.get('numero_conta', '')}
+Referência: {service_data.get('referencia', '')}
+
+DESCRIÇÃO DO PROBLEMA:
+{service_data.get('problema', '')}
+
+Valor Contestado: R$ {service_data.get('valor_contestado', '')}
+Data da Conta: {service_data.get('data_conta', '')}
+Leitura Anterior: {service_data.get('leitura_anterior', '')}
+Leitura Atual: {service_data.get('leitura_atual', '')}
+
+DETALHES DA CONTESTAÇÃO:
+{service_data.get('detalhes', '')}
+
+COM BASE NO CÓDIGO DE DEFESA DO CONSUMIDOR, SOLICITO:
+
+1. Revisão imediata da conta
+2. Correção dos valores cobrados indevidamente
+3. Explicação detalhada sobre os reajustes
+4. Resposta formal em até 30 dias
+
+Atenciosamente,
+
+{service_data.get('nome', '')}
+"""
+
+def generate_billing_complaint(service_data: Dict) -> str:
+    return f"""
+RECURSO DE COBRANÇA INDEVIDA - {service_data.get('empresa', '').upper()}
+
+DADOS DO CLIENTE:
+Nome: {service_data.get('nome', '')}
+CPF: {service_data.get('cpf', '')}
+E-mail: {service_data.get('email', '')}
+Telefone: {service_data.get('telefone', '')}
+
+DADOS DA COBRANÇA:
+Empresa: {service_data.get('empresa', '')}
+Tipo de Cobrança: {service_data.get('tipo_cobranca', '')}
+Valor Cobrado: R$ {service_data.get('valor_cobranca', '')}
+Data da Cobrança: {service_data.get('data_cobranca', '')}
+Número do Documento: {service_data.get('numero_nota', '')}
+
+MOTIVO DA CONTESTAÇÃO:
+{service_data.get('descricao', '')}
+
+Já realizou reclamação anterior? {service_data.get('ja_reclamou', 'Não')}
+
+FUNDAMENTAÇÃO JURÍDICA:
+Com base no Código de Defesa do Consumidor (Lei 8.078/90), especialmente nos artigos 39 (práticas abusivas) e 42 (cobrança de dívidas), solicito:
+
+1. Cancelamento imediato da cobrança indevida
+2. Estorno do valor cobrado, se for o caso
+3. Retificação dos registros cadastrais
+4. Compensação por danos morais, quando aplicável
+
+Atenciosamente,
+
+{service_data.get('nome', '')}
+"""
+
 # -------------------------------------------------
 # Componentes de Interface
 # -------------------------------------------------
 def render_navigation():
     """Navegação principal"""
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
     
     with col1:
-        st.markdown(f"<h3 style='color: var(--clara-gold); margin: 0;'>CLARA LAW</h3>", unsafe_allow_html=True)
-        st.caption("Inteligência para um mundo mais claro")
+        render_logo()
     
     with col2:
         if st.button("🏠 Início", use_container_width=True, key="nav_home"):
             st.session_state.current_view = "home"
             st.session_state.active_service = None
+            st.rerun()
     
     with col3:
         if st.button("🛡️ Serviços", use_container_width=True, key="nav_services"):
             st.session_state.current_view = "services"
             st.session_state.active_service = None
+            st.rerun()
     
     with col4:
         if st.button("⭐ Premium", use_container_width=True, key="nav_premium"):
             st.session_state.current_view = "premium"
+            st.rerun()
+    
+    with col5:
+        if st.button("ℹ️ Sobre", use_container_width=True, key="nav_about"):
+            st.session_state.current_view = "about"
+            st.rerun()
 
 def render_hero_section():
     """Hero section impactante"""
@@ -458,6 +578,7 @@ def render_hero_section():
     with col2:
         if st.button("👉 Ver Serviços Disponíveis", use_container_width=True, type="primary"):
             st.session_state.current_view = "services"
+            st.rerun()
     
     st.markdown("</div></div>", unsafe_allow_html=True)
 
@@ -474,30 +595,37 @@ def render_services_grid():
     categories = list(set([service["category"] for service in SERVICES.values()]))
     selected_category = st.selectbox("Filtrar por categoria:", ["Todos"] + categories)
     
-    st.markdown('<div class="clara-service-grid">', unsafe_allow_html=True)
-    
+    # Layout responsivo com colunas
+    services_list = []
     for service_id, service in SERVICES.items():
         if selected_category != "Todos" and service["category"] != selected_category:
             continue
+        services_list.append((service_id, service))
+    
+    # Organizar em grid responsivo
+    cols = st.columns(2)
+    for idx, (service_id, service) in enumerate(services_list):
+        col = cols[idx % 2]
+        
+        with col:
+            is_active = st.session_state.active_service == service_id
+            card_class = "clara-card service-active" if is_active else "clara-card"
             
-        is_active = st.session_state.active_service == service_id
-        card_class = "clara-card service-active" if is_active else "clara-card"
-        
-        st.markdown(f"""
-        <div class="{card_class}">
-            <div style='text-align: center;'>
-                <div class="clara-feature-icon">{service['icon']}</div>
-                <h3>{service['title']}</h3>
-                <p style='color: var(--clara-gray); margin-bottom: 1.5rem;'>{service['description']}</p>
-                <small style='color: var(--clara-gold); font-weight: 600;'>{service['category']}</small>
+            st.markdown(f"""
+            <div class="{card_class}">
+                <div style='text-align: center;'>
+                    <div class="clara-feature-icon">{service['icon']}</div>
+                    <h3>{service['title']}</h3>
+                    <p style='color: var(--clara-gray); margin-bottom: 1.5rem;'>{service['description']}</p>
+                    <small style='color: var(--clara-gold); font-weight: 600;'>{service['category']}</small>
+                </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button(f"Usar {service['title'].split(' ')[0]}", key=f"btn_{service_id}", use_container_width=True):
-            st.session_state.active_service = service_id
-            st.session_state.current_view = "service_detail"
-            st.rerun()
+            """, unsafe_allow_html=True)
+            
+            if st.button(f"Usar {service['title'].split(' ')[0]}", key=f"btn_{service_id}", use_container_width=True):
+                st.session_state.active_service = service_id
+                st.session_state.current_view = "service_detail"
+                st.rerun()
 
 def render_service_detail():
     """Detalhe do serviço selecionado"""
@@ -514,6 +642,11 @@ def render_service_detail():
         <p>{service['description']}</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Botão voltar
+    if st.button("← Voltar para Serviços", key="back_to_services"):
+        st.session_state.current_view = "services"
+        st.rerun()
     
     # Mostrar etapas do processo
     st.markdown("### 📋 Como funciona:")
@@ -546,6 +679,8 @@ def render_service_detail():
         render_utility_service(service_data)
     elif st.session_state.active_service == "analise_contratos":
         render_contract_analysis()
+    elif st.session_state.active_service == "entender_editais":
+        render_edital_analysis()
 
 def render_cancellation_service(service_data: Dict):
     """Serviço de cancelamento de assinaturas"""
@@ -639,7 +774,35 @@ def render_billing_service(service_data: Dict):
                                 placeholder="Exemplo: Esta cobrança apareceu sem minha autorização, nunca contratei este serviço...")
         
         if st.form_submit_button("📄 Gerar Recurso", use_container_width=True):
-            st.success("✅ Recurso gerado! Em breve teremos templates específicos para cada tipo de cobrança.")
+            if empresa and tipo_cobranca and descricao:
+                complaint_data = {
+                    'empresa': empresa,
+                    'tipo_cobranca': tipo_cobranca,
+                    'valor_cobranca': valor_cobranca,
+                    'data_cobranca': data_cobranca.strftime("%d/%m/%Y"),
+                    'numero_nota': numero_nota,
+                    'ja_reclamou': ja_reclamou,
+                    'descricao': descricao,
+                    'nome': st.session_state.profile.get('nome', ''),
+                    'email': st.session_state.profile.get('email', ''),
+                    'cpf': st.session_state.profile.get('cpf', ''),
+                    'telefone': st.session_state.profile.get('cel', '')
+                }
+                
+                carta = generate_billing_complaint(complaint_data)
+                
+                st.success("✅ Recurso gerado com sucesso!")
+                st.download_button(
+                    "📥 Baixar Recurso",
+                    data=carta,
+                    file_name=f"recurso_cobranca_{empresa}.txt",
+                    mime="text/plain"
+                )
+                
+                with st.expander("📋 Visualizar Recurso"):
+                    st.text_area("Seu recurso:", carta, height=300)
+            else:
+                st.error("⚠️ Preencha todos os campos obrigatórios (*)")
 
 def render_interest_service(service_data: Dict):
     """Serviço de juros abusivos"""
@@ -676,150 +839,10 @@ def render_interest_service(service_data: Dict):
     
     with tab2:
         st.subheader("Carta de Renegociação")
-        st.info("Em desenvolvimento - breve disponível!")
-
-def render_airline_service(service_data: Dict):
-    """Serviço para problemas com transporte aéreo"""
-    with st.form("airline_form"):
-        st.subheader("✈️ Dados do Voo")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            companhia = st.text_input("Companhia Aérea*", value=service_data.get('companhia', ''))
-            numero_voo = st.text_input("Número do Voo*", value=service_data.get('numero_voo', ''))
-            data_voo = st.date_input("Data do Voo*", value=service_data.get('data_voo', datetime.now()))
-        
-        with col2:
-            origem = st.text_input("Cidade de Origem*", value=service_data.get('origem', ''))
-            destino = st.text_input("Cidade de Destino*", value=service_data.get('destino', ''))
-            passageiros = st.number_input("Número de Passageiros", min_value=1, value=1)
-        
-        st.subheader("🔍 Problema Ocorrido")
-        problema = st.selectbox("Tipo de Problema*", [
-            "Atraso no voo",
-            "Cancelamento do voo",
-            "Extravio de bagagem",
-            "Overbooking",
-            "Má atendimento",
-            "Outro"
-        ])
-        
-        detalhes = st.text_area("Descreva o ocorrido em detalhes*",
-                               height=120,
-                               placeholder="Exemplo: O voo atrasou 4 horas, perdemos conexões importantes...")
-        
-        prejuizos = st.text_area("Quais prejuízos você teve?",
-                                height=80,
-                                placeholder="Exemplo: Hotel extra, alimentação, compromissos perdidos...")
-        
-        if st.form_submit_button("📄 Gerar Reclamação ANAC", use_container_width=True):
-            if companhia and numero_voo and problema and detalhes:
-                complaint_data = {
-                    'companhia': companhia,
-                    'numero_voo': numero_voo,
-                    'data_voo': data_voo.strftime("%d/%m/%Y"),
-                    'origem': origem,
-                    'destino': destino,
-                    'problema': problema,
-                    'detalhes': detalhes,
-                    'prejuizos': prejuizos,
-                    'nome': st.session_state.profile.get('nome', ''),
-                    'email': st.session_state.profile.get('email', ''),
-                    'cpf': st.session_state.profile.get('cpf', ''),
-                    'telefone': st.session_state.profile.get('cel', '')
-                }
-                
-                carta = generate_anac_complaint(complaint_data)
-                
-                st.success("✅ Reclamação ANAC gerada com sucesso!")
-                st.download_button(
-                    "📥 Baixar Reclamação ANAC",
-                    data=carta,
-                    file_name=f"reclamacao_anac_{companhia}.txt",
-                    mime="text/plain"
-                )
-                
-                with st.expander("📋 Visualizar Reclamação"):
-                    st.text_area("Sua reclamação:", carta, height=300)
-            else:
-                st.error("⚠️ Preencha todos os campos obrigatórios (*)")
-
-def render_telecom_service(service_data: Dict):
-    """Serviço para problemas com telecomunicações"""
-    with st.form("telecom_form"):
-        st.subheader("📞 Dados do Serviço")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            operadora = st.text_input("Operadora*", value=service_data.get('operadora', ''))
-            tipo_servico = st.selectbox("Tipo de Serviço*", [
-                "Internet Banda Larga",
-                "Telefone Fixo",
-                "TV por Assinatura",
-                "Telefone Móvel",
-                "Combo"
-            ])
-        
-        with col2:
-            numero_contrato = st.text_input("Número do Contrato", value=service_data.get('numero_contrato', ''))
-            endereco = st.text_input("Endereço de Instalação", value=service_data.get('endereco', ''))
-        
-        st.subheader("🔍 Problema Reportado")
-        problema = st.selectbox("Tipo de Problema*", [
-            "Falha no serviço",
-            "Lentidão da internet",
-            "Cobranças indevidas",
-            "Mau atendimento",
-            "Problemas técnicos persistentes",
-            "Outro"
-        ])
-        
-        data_inicio = st.date_input("Data do início do problema*", value=service_data.get('data_inicio', datetime.now()))
-        
-        contatou_operadora = st.selectbox("Já contactou a operadora?", ["Não", "Sim - Sem solução", "Sim - Em processamento"])
-        protocolo_operadora = st.text_input("Protocolo na operadora (se houver)", value=service_data.get('protocolo_operadora', ''))
-        
-        detalhes = st.text_area("Descreva o problema em detalhes*",
-                               height=120,
-                               placeholder="Exemplo: A internet cai diariamente, a velocidade está muito abaixo do contratado...")
-        
-        if st.form_submit_button("📄 Gerar Reclamação ANATEL", use_container_width=True):
-            if operadora and tipo_servico and problema and detalhes:
-                complaint_data = {
-                    'operadora': operadora,
-                    'tipo_servico': tipo_servico,
-                    'numero_contrato': numero_contrato,
-                    'endereco': endereco,
-                    'problema': problema,
-                    'data_inicio': data_inicio.strftime("%d/%m/%Y"),
-                    'contatou_operadora': contatou_operadora,
-                    'protocolo_operadora': protocolo_operadora,
-                    'detalhes': detalhes,
-                    'nome': st.session_state.profile.get('nome', ''),
-                    'email': st.session_state.profile.get('email', ''),
-                    'cpf': st.session_state.profile.get('cpf', ''),
-                    'telefone': st.session_state.profile.get('cel', '')
-                }
-                
-                carta = generate_anatel_complaint(complaint_data)
-                
-                st.success("✅ Reclamação ANATEL gerada com sucesso!")
-                st.download_button(
-                    "📥 Baixar Reclamação ANATEL",
-                    data=carta,
-                    file_name=f"reclamacao_anatel_{operadora}.txt",
-                    mime="text/plain"
-                )
-            else:
-                st.error("⚠️ Preencha todos os campos obrigatórios (*)")
-
-def render_utility_service(service_data: Dict):
-    """Serviço para problemas com energia e água"""
-    st.info("💡 **Dica:** Use para disputar contas abusivas de energia elétrica, água e gás.")
-    
-    with st.form("utility_form"):
-        tipo_conta = st.selectbox("Tipo de Conta*", ["Energia Elétrica", "Água/Esgoto", "Gás"])
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            empresa = st.text_input("Nome da Concessionária*",
+        with st.form("interest_letter_form"):
+            empresa = st.text_input("Nome do Banco/Financeira*")
+            numero_contrato = st.text_input("Número do Contrato*")
+            valor_original = st.number_input("Valor Original do Empréstimo (R$)*", min_value=0.0)
+            cet_atual = st.number_input("CET Atual (%)*", min_value=0.0, value=8.0)
+            cet_proposto = st.number_input("CET
