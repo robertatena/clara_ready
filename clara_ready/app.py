@@ -12,6 +12,18 @@ from typing import Dict, Any, Tuple, Set, List
 import streamlit as st
 from PIL import Image
 import base64
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from streamlit_lottie import st_lottie
+import json
+import requests
+from datetime import datetime
+import pypdf  # Em vez de PyPDF2
+from io import BytesIO
+import base64
 
 # ---- módulos locais ----
 from app_modules.pdf_utils import extract_text_from_pdf
@@ -846,3 +858,4 @@ def render_interest_service(service_data: Dict):
             valor_original = st.number_input("Valor Original do Empréstimo (R$)*", min_value=0.0)
             cet_atual = st.number_input("CET Atual (%)*", min_value=0.0, value=8.0)
             cet_proposto = st.number_input("CET
+
