@@ -10,9 +10,7 @@ import uuid
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from streamlit_lottie import st_lottie
+import altair as alt
 
 # ---- módulos locais ----
 from app_modules.pdf_utils import extract_text_from_pdf, extract_pdf_metadata
@@ -198,6 +196,23 @@ def inject_custom_css():
             border: 2px dashed var(--blue);
             margin: 10px 0;
         }}
+        
+        .risk-meter {{
+            background: linear-gradient(90deg, #4CAF50 0%, #8BC34A 20%, #FFC107 40%, #FF9800 60%, #F44336 100%);
+            height: 20px;
+            border-radius: 10px;
+            margin: 10px 0;
+            position: relative;
+        }}
+        
+        .risk-indicator {{
+            position: absolute;
+            top: -5px;
+            width: 4px;
+            height: 30px;
+            background: var(--dark);
+            border-radius: 2px;
+        }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -246,35 +261,38 @@ def feature_card(icon: str, title: str, description: str, premium: bool = False)
     """, unsafe_allow_html=True)
 
 def risk_meter(score: int):
-    colors = ["#4CAF50", "#8BC34A", "#FFC107", "#FF9800", "#F44336"]
-    risk_levels = ["Muito Baixo", "Baixo", "Médio", "Alto", "Muito Alto"]
+    """Medidor de risco usando HTML/CSS puro"""
+    position = min(score, 100)
     
-    fig = go.Figure(go.Indicator(
-        mode = "gauge+number+delta",
-        value = score,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': "Nível de Risco"},
-        delta = {'reference': 50},
-        gauge = {
-            'axis': {'range': [0, 100]},
-            'bar': {'color': colors[min(score//20, 4)]},
-            'steps': [
-                {'range': [0, 20], 'color': "lightgray"},
-                {'range': [20, 40], 'color': "lightgray"},
-                {'range': [40, 60], 'color': "lightgray"},
-                {'range': [60, 80], 'color': "lightgray"},
-                {'range': [80, 100], 'color': "lightgray"}
-            ],
-            'threshold': {
-                'line': {'color': "red", 'width': 4},
-                'thickness': 0.75,
-                'value': 90
-            }
-        }
-    ))
+    st.markdown(f"""
+    <div style="margin: 20px 0;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+            <span style="font-size: 0.8rem; color: #4CAF50;">0</span>
+            <span style="font-size: 0.8rem; color: #666;">Nível de Risco: {score}/100</span>
+            <span style="font-size: 0.8rem; color: #F44336;">100</span>
+        </div>
+        <div class="risk-meter">
+            <div class="risk-indicator" style="left: {position}%;"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-top: 5px;">
+            <span style="font-size: 0.7rem; color: #4CAF50;">Muito Baixo</span>
+            <span style="font-size: 0.7rem; color: #FFC107;">Médio</span>
+            <span style="font-size: 0.7rem; color: #F44336;">Muito Alto</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    fig.update_layout(height=300)
-    st.plotly_chart(fig, use_container_width=True)
+    # Indicador de nível de risco
+    if score >= 80:
+        st.error("⚠️ **Risco Muito Alto** - Recomendamos revisão urgente com especialista")
+    elif score >= 60:
+        st.warning("🔶 **Risco Alto** - Atenção necessária a várias cláusulas")
+    elif score >= 40:
+        st.info("🔸 **Risco Médio** - Alguns pontos requerem atenção")
+    elif score >= 20:
+        st.success("✅ **Risco Baixo** - Contrato relativamente seguro")
+    else:
+        st.success("🛡️ **Risco Muito Baixo** - Contrato bem estruturado")
 
 # -------------------------------------------------
 # Tela Inicial Premium
@@ -392,20 +410,23 @@ def advanced_upload_section():
         
         if uploaded_file:
             with st.spinner("🔍 Analisando estrutura do documento..."):
-                metadata = extract_pdf_metadata(uploaded_file)
-                text_content = extract_text_from_pdf(uploaded_file)
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.info(f"📑 Páginas: {metadata.get('pages', 'N/A')}")
-                    st.info(f"📏 Tamanho: {metadata.get('size', 'N/A')}")
-                
-                with col2:
-                    st.info(f"✍️ Palavras: {len(text_content.split())}")
-                    st.info(f"📊 Caracteres: {len(text_content)}")
-                
-                st.session_state.current_contract = text_content
-                st.success("✅ Documento carregado com sucesso!")
+                try:
+                    metadata = extract_pdf_metadata(uploaded_file)
+                    text_content = extract_text_from_pdf(uploaded_file)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.info(f"📑 Páginas: {metadata.get('pages', 'N/A')}")
+                        st.info(f"📏 Tamanho: {metadata.get('size', 'N/A')}")
+                    
+                    with col2:
+                        st.info(f"✍️ Palavras: {len(text_content.split())}")
+                        st.info(f"📊 Caracteres: {len(text_content)}")
+                    
+                    st.session_state.current_contract = text_content
+                    st.success("✅ Documento carregado com sucesso!")
+                except Exception as e:
+                    st.error(f"❌ Erro ao processar PDF: {str(e)}")
     
     with tab2:
         text_input = st.text_area(
@@ -431,6 +452,8 @@ def advanced_upload_section():
             if st.button("🏠 Contrato de Locação Residencial", use_container_width=True):
                 st.session_state.current_contract = load_rental_contract_template()
                 st.success("✅ Modelo carregado! Adapte conforme necessário.")
+    
+    return st.session_state.current_contract
 
 def context_analysis_section():
     st.header("2. 🎯 Contexto da Análise")
@@ -483,7 +506,7 @@ def context_analysis_section():
     }
 
 def advanced_analysis_results(text: str, context: Dict[str, Any]):
-    if not text.strip():
+    if not text or not text.strip():
         st.warning("Por favor, carregue um contrato para análise.")
         return
     
@@ -499,18 +522,25 @@ def advanced_analysis_results(text: str, context: Dict[str, Any]):
         for i in range(100):
             progress_bar.progress(i + 1)
         
-        hits, meta = analyze_contract_text(text, context)
-        risk_score = risk_assessment_score(hits)
-        negotiation_strategy = generate_negotiation_strategy(hits, context)
+        try:
+            hits, meta = analyze_contract_text(text, context)
+            risk_score = risk_assessment_score(hits)
+            negotiation_strategy = generate_negotiation_strategy(hits, context)
+        except Exception as e:
+            st.error(f"❌ Erro na análise: {str(e)}")
+            return
     
     if not st.session_state.premium:
         st.session_state.free_runs_left -= 1
     
     # Log da análise
-    log_analysis_event(
-        email=st.session_state.profile.get("email", ""),
-        meta={**context, "risk_score": risk_score, "text_length": len(text)}
-    )
+    try:
+        log_analysis_event(
+            email=st.session_state.profile.get("email", ""),
+            meta={**context, "risk_score": risk_score, "text_length": len(text)}
+        )
+    except Exception:
+        pass  # Ignora erros de log
     
     # Header dos resultados
     col1, col2, col3 = st.columns([2, 1, 1])
@@ -569,17 +599,12 @@ def advanced_analysis_results(text: str, context: Dict[str, Any]):
     # Ferramentas Adicionais
     st.header("🛠️ Ferramentas Adicionais")
     
-    tool_tabs = st.tabs(["Calculadora CET", "Comparar Versões", "Exportar Relatório"])
+    tool_tabs = st.tabs(["Calculadora CET", "Exportar Relatório"])
     
     with tool_tabs[0]:
         advanced_cet_calculator()
     
     with tool_tabs[1]:
-        st.info("🔒 Recurso Premium - Compare diferentes versões do contrato")
-        if st.button("Desbloquear Comparação", type="secondary"):
-            show_premium_upsell()
-    
-    with tool_tabs[2]:
         export_advanced_report(hits, resume, context, risk_score)
 
 # -------------------------------------------------
@@ -601,23 +626,6 @@ def show_premium_upsell():
         st.session_state.show_pricing = True
 
 def export_advanced_report(hits, resume, context, risk_score):
-    report_data = {
-        "metadata": {
-            "empresa": "CLARA Law",
-            "versao": VERSION,
-            "data_analise": datetime.now().isoformat(),
-            "usuario": st.session_state.profile.get("nome", ""),
-            "email": st.session_state.profile.get("email", "")
-        },
-        "contexto": context,
-        "resumo": resume,
-        "risco_total": risk_score,
-        "pontos_analise": hits
-    }
-    
-    # JSON para desenvolvedores
-    json_report = json.dumps(report_data, indent=2, ensure_ascii=False)
-    
     # Relatório executivo em texto
     executive_summary = f"""
     RELATÓRIO DE ANÁLISE - CLARA Law
@@ -652,7 +660,7 @@ def export_advanced_report(hits, resume, context, risk_score):
     Este relatório foi gerado automaticamente e não substitui aconselhamento jurídico profissional.
     """
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     
     with col1:
         st.download_button(
@@ -663,14 +671,6 @@ def export_advanced_report(hits, resume, context, risk_score):
         )
     
     with col2:
-        st.download_button(
-            "📊 Baixar JSON Completo",
-            data=json_report.encode('utf-8'),
-            file_name=f"analise_detalhada_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-            mime="application/json"
-        )
-    
-    with col3:
         st.download_button(
             "📧 Gerar E-mail para Advogado",
             data=generate_lawyer_email(resume, hits).encode('utf-8'),
@@ -684,28 +684,31 @@ def advanced_cet_calculator():
     col1, col2 = st.columns(2)
     
     with col1:
-        principal = st.number_input("Valor Principal (R$)", min_value=0.0, step=1000.0)
-        monthly_rate = st.number_input("Taxa de Juros Mensal (%)", min_value=0.0, step=0.1)
-        installments = st.number_input("Número de Parcelas", min_value=1, step=1)
+        principal = st.number_input("Valor Principal (R$)", min_value=0.0, step=1000.0, key="cet_principal")
+        monthly_rate = st.number_input("Taxa de Juros Mensal (%)", min_value=0.0, step=0.1, key="cet_rate")
+        installments = st.number_input("Número de Parcelas", min_value=1, step=1, key="cet_installments")
     
     with col2:
-        fees = st.number_input("Taxas Administrativas (R$)", min_value=0.0, step=10.0)
-        insurance = st.number_input("Seguro (R$)", min_value=0.0, step=10.0)
-        other_costs = st.number_input("Outros Custos (R$)", min_value=0.0, step=10.0)
+        fees = st.number_input("Taxas Administrativas (R$)", min_value=0.0, step=10.0, key="cet_fees")
+        insurance = st.number_input("Seguro (R$)", min_value=0.0, step=10.0, key="cet_insurance")
+        other_costs = st.number_input("Outros Custos (R$)", min_value=0.0, step=10.0, key="cet_other")
     
     total_fees = fees + insurance + other_costs
     
-    if st.button("Calcular CET", use_container_width=True):
+    if st.button("Calcular CET", use_container_width=True, key="btn_calc_cet"):
         if principal > 0 and installments > 0:
-            cet = compute_cet_quick(principal, monthly_rate/100, installments, total_fees)
-            
-            st.success(f"**Custo Efetivo Total (CET):** {cet*100:.2f}% ao mês")
-            
-            # Análise comparativa
-            if cet * 100 > 5:
-                st.warning("⚠️ CET acima da média de mercado. Recomendamos negociar melhores condições.")
-            else:
-                st.info("✅ CET dentro de parâmetros razoáveis.")
+            try:
+                cet = compute_cet_quick(principal, monthly_rate/100, installments, total_fees)
+                
+                st.success(f"**Custo Efetivo Total (CET):** {cet*100:.2f}% ao mês")
+                
+                # Análise comparativa
+                if cet * 100 > 5:
+                    st.warning("⚠️ CET acima da média de mercado. Recomendamos negociar melhores condições.")
+                else:
+                    st.info("✅ CET dentro de parâmetros razoáveis.")
+            except Exception as e:
+                st.error(f"Erro no cálculo: {str(e)}")
         else:
             st.error("Por favor, preencha os valores principal e número de parcelas.")
 
@@ -746,127 +749,96 @@ Atenciosamente,
 # Funções de Modelo (placeholder)
 # -------------------------------------------------
 def load_service_contract_template():
-    return "CONTRATO DE PRESTAÇÃO DE SERVIÇOS..."
+    return """CONTRATO DE PRESTAÇÃO DE SERVIÇOS
+
+ENTRE:
+[NOME DA CONTRATANTE], [nacionalidade], [estado civil], [profissão], 
+portador(a) do CPF nº [número] e RG nº [número], residente e 
+domiciliado(a) na [endereço completo], doravante denominada CONTRATANTE;
+
+E:
+[NOME DA CONTRATADA], [nacionalidade], [estado civil], [profissão], 
+portador(a) do CPF nº [número] e RG nº [número], residente e 
+domiciliado(a) na [endereço completo], doravante denominada CONTRATADA.
+
+As partes acima identificadas têm, entre si, justo e acertado o 
+presente Contrato de Prestação de Serviços, que se regerá pelas 
+cláusulas seguintes:
+
+CLÁUSULA 1ª - DO OBJETO
+O presente contrato tem por objeto a prestação de serviços de 
+[descrição detalhada dos serviços] pela CONTRATADA para a CONTRATANTE.
+
+CLÁUSULA 2ª - DO PRAZO
+O presente contrato vigorará pelo prazo de [número] meses, 
+iniciando-se em [data] e terminando em [data], podendo ser renovado 
+mediante acordo entre as partes.
+
+CLÁUSULA 3ª - DO VALOR E FORMA DE PAGAMENTO
+Os serviços serão remunerados pelo valor mensal de R$ [valor], 
+a ser pago até o dia [dia] de cada mês, mediante [forma de pagamento].
+
+CLÁUSULA 4ª - DAS OBRIGAÇÕES DAS PARTES
+4.1. São obrigações da CONTRATADA:
+a) Executar os serviços com diligência e capacidade técnica;
+b) Manter sigilo sobre informações da CONTRATANTE;
+
+4.2. São obrigações da CONTRATANTE:
+a) Fornecer informações necessárias à execução dos serviços;
+b) Efetuar os pagamentos nos prazos estipulados;
+
+E por estarem assim justas e acertadas, assinam o presente contrato 
+em duas vias de igual teor e forma.
+
+[Local], [data]
+
+___________________________
+[Nome da Contratante]
+
+___________________________
+[Nome da Contratada]"""
 
 def load_rental_contract_template():
-    return "CONTRATO DE LOCAÇÃO RESIDENCIAL..."
+    return """CONTRATO DE LOCAÇÃO RESIDENCIAL
 
-# -------------------------------------------------
-# Main Application
-# -------------------------------------------------
-def main():
-    # Inicialização
-    inject_custom_css()
-    init_session_state()
-    
-    # Barra lateral
-    with st.sidebar:
-        render_sidebar()
-    
-    # Conteúdo principal
-    if not st.session_state.started:
-        render_landing_page()
-    else:
-        render_analysis_interface()
+ENTRE:
+[NOME DO LOCADOR], [nacionalidade], [estado civil], [profissão], 
+portador(a) do CPF nº [número] e RG nº [número], residente e 
+domiciliado(a) na [endereço completo], doravante denominado LOCADOR;
 
-def render_sidebar():
-    st.sidebar.markdown(f"""
-    <div style="text-align: center; margin-bottom: 2rem;">
-        <div style="font-family: 'Raleway', sans-serif; font-weight: 600; font-size: 1.5rem; color: {BRAND_COLORS['dark']};">
-            CLARA Law
-        </div>
-        <div style="font-size: 0.8rem; color: {BRAND_COLORS['gold']};">
-            Inteligência para um mundo mais claro
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Perfil do usuário
-    with st.sidebar.expander("👤 Meu Perfil", expanded=True):
-        render_user_profile()
-    
-    # Status da conta
-    render_account_status()
-    
-    # Navegação rápida
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Navegação")
-    
-    if st.sidebar.button("🏠 Página Inicial", use_container_width=True):
-        st.session_state.started = False
-        st.rerun()
-    
-    if st.sidebar.button("📊 Histórico de Análises", use_container_width=True):
-        st.session_state.show_history = True
+E:
+[NOME DO LOCATÁRIO], [nacionalidade], [estado civil], [profissão], 
+portador(a) do CPF nº [número] e RG nº [número], residente e 
+domiciliado(a) na [endereço completo], doravante denominado LOCATÁRIO.
 
-def render_user_profile():
-    nome = st.text_input("Nome Completo", value=st.session_state.profile.get("nome", ""))
-    email = st.text_input("E-mail", value=st.session_state.profile.get("email", ""))
-    cel = st.text_input("Celular", value=st.session_state.profile.get("cel", ""))
-    empresa = st.text_input("Empresa", value=st.session_state.profile.get("empresa", ""))
-    cargo = st.text_input("Cargo", value=st.session_state.profile.get("cargo", ""))
-    
-    if st.button("💾 Salvar Perfil", use_container_width=True):
-        # Validação básica
-        if email and not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
-            st.error("Por favor, insira um e-mail válido.")
-        else:
-            st.session_state.profile.update({
-                "nome": nome, "email": email, "cel": cel,
-                "empresa": empresa, "cargo": cargo
-            })
-            st.success("Perfil atualizado!")
+Celebram as partes o presente Contrato de Locação Residencial, 
+que se regerá pelas cláusulas seguintes:
 
-def render_account_status():
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Minha Conta")
-    
-    if st.session_state.premium:
-        st.sidebar.success("💎 Conta Premium")
-        st.sidebar.metric("Análises Restantes", "Ilimitadas")
-    else:
-        st.sidebar.warning("🆓 Conta Gratuita")
-        st.sidebar.metric("Análises Restantes", st.session_state.free_runs_left)
-        
-        if st.sidebar.button("🚀 Fazer Upgrade", use_container_width=True):
-            st.session_state.show_pricing = True
+CLÁUSULA 1ª - DO IMÓVEL
+Fica locado ao LOCATÁRIO o imóvel residencial situado à 
+[endereço completo do imóvel], com as seguintes características:
+[descrição detalhada do imóvel].
 
-def render_landing_page():
-    premium_hero_section()
-    features_section()
-    social_proof_section()
-    
-    # Call-to-action final
-    st.markdown("---")
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.header("🎯 Pronto para tomar decisões mais seguras?")
-        st.markdown("Comece agora sua análise gratuita e experimente o poder da CLARA Law.")
-    
-    with col2:
-        if st.button("📄 Iniciar Análise do Contrato", use_container_width=True, type="primary"):
-            st.session_state.started = True
-            st.rerun()
+CLÁUSULA 2ª - DO PRAZO
+A locação terá o prazo de [número] meses, iniciando-se em [data] 
+e terminando em [data].
 
-def render_analysis_interface():
-    st.header("⚖️ Análise de Contrato - CLARA Law")
-    
-    # Fluxo de análise
-    contract_text = advanced_upload_section()
-    analysis_context = context_analysis_section()
-    
-    st.markdown("---")
-    
-    if st.button("🚀 Executar Análise Completa", type="primary", use_container_width=True):
-        if st.session_state.current_contract:
-            advanced_analysis_results(st.session_state.current_contract, analysis_context)
-        else:
-            st.error("Por favor, carregue um contrato antes de executar a análise.")
+CLÁUSULA 3ª - DO ALUGUEL
+3.1. O aluguel mensal será de R$ [valor], a ser pago até o 
+dia [dia] de cada mês.
 
-if __name__ == "__main__":
-    main()
+3.2. O reajuste do aluguel obedecerá aos índices [especificar índice] 
+ou variação do IGP-M, o que for menor.
 
+CLÁUSULA 4ª - DAS GARANTIAS
+4.1. Como garantia do fiel cumprimento do contrato, o LOCATÁRIO 
+depositará em favor do LOCADOR o equivalente a [número] meses de aluguel.
+
+CLÁUSULA 5ª - DAS CONDIÇÕES GERAIS
+5.1. O LOCATÁRIO obriga-se a usar o imóvel para fins exclusivamente 
+residenciais.
+
+5.2. É vedado ao LOCATÁRIO ceder, transferir ou sublocar o
 
 
 
