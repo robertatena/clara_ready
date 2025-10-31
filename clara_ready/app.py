@@ -1,861 +1,720 @@
-# app.py — CLARA • Sua Assistente Jurídica Pessoal
-# Versão completa com serviços funcionais + casos campeões
-
-import os
-import io
-import re
-import csv
-import json
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Dict, Any, Tuple, Set, List
-import streamlit as st
-from PIL import Image
-import base64
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from streamlit_lottie import st_lottie
-import json
 import requests
-from datetime import datetime
-import pypdf  # Em vez de PyPDF2
+from datetime import datetime, timedelta
+import json
 from io import BytesIO
 import base64
 
-# ---- módulos locais ----
-from app_modules.pdf_utils import extract_text_from_pdf
-from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
-from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
-from app_modules.storage import (
-    init_db,
-    log_analysis_event,
-    log_subscriber,
-    list_subscribers,
-    get_subscriber_by_email,
+# ==================================================
+# CONFIGURAÇÃO DA PÁGINA E IDENTIDADE VISUAL DA CLARA
+# ==================================================
+
+st.set_page_config(
+    page_title="Clara Ready - Plataforma de Gestão Financeira",
+    page_icon="💜",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# -------------------------------------------------
-# Configs
-# -------------------------------------------------
-APP_TITLE = "CLARA • Sua Assistente Jurídica Pessoal"
-VERSION = "v3.0"
-
-st.set_page_config(page_title=APP_TITLE, page_icon="⚖️", layout="wide")
-
-# Secrets
-STRIPE_PUBLIC_KEY = st.secrets.get("STRIPE_PUBLIC_KEY", "")
-STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", "")
-STRIPE_PRICE_ID = st.secrets.get("STRIPE_PRICE_ID", "")
-BASE_URL = st.secrets.get("BASE_URL", "https://claraready.streamlit.app")
-
-MONTHLY_PRICE_TEXT = "R$ 9,90/mês"
-
-# -------------------------------------------------
-# Estilo Moderno + CLARA Identity
-# -------------------------------------------------
-st.markdown(
-    """
-    <style>
-    :root {
-        --clara-gold: #D4AF37;
-        --clara-blue: #ABDBF0;
-        --clara-dark: #0f172a;
-        --clara-gray: #475569;
-        --clara-light: #f8fafc;
-        --clara-success: #10b981;
-        --clara-warning: #f59e0b;
-        --clara-danger: #ef4444;
-    }
-    
-    .clara-hero {
-        background: linear-gradient(135deg, var(--clara-dark) 0%, #1e293b 100%);
-        color: white;
-        padding: 4rem 0;
+# CSS personalizado com identidade da Clara
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 3rem;
+        color: #8A2BE2;
         text-align: center;
-        border-radius: 0 0 20px 20px;
+        margin-bottom: 1rem;
+        font-weight: bold;
     }
-    
-    .clara-hero-content {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 0 2rem;
-    }
-    
-    .clara-badge {
-        background: var(--clara-gold);
-        color: var(--clara-dark);
-        padding: 0.5rem 1.5rem;
-        border-radius: 50px;
-        font-weight: 700;
-        font-size: 0.9rem;
-        display: inline-block;
-        margin-bottom: 1.5rem;
-    }
-    
-    .clara-title {
-        font-size: 3.5rem;
-        font-weight: 800;
-        margin: 1rem 0;
-        line-height: 1.1;
-    }
-    
     .clara-subtitle {
-        font-size: 1.3rem;
-        opacity: 0.9;
-        margin-bottom: 2rem;
-        line-height: 1.6;
-    }
-    
-    .clara-card {
-        background: white;
-        border-radius: 16px;
-        padding: 2rem;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        border: 1px solid #e2e8f0;
-        margin: 1rem 0;
-        transition: transform 0.2s ease;
-    }
-    
-    .clara-card:hover {
-        transform: translateY(-2px);
-    }
-    
-    .clara-service-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: 1.5rem;
-        margin: 2rem 0;
-    }
-    
-    .clara-feature {
+        font-size: 1.5rem;
+        color: #6A0DAD;
         text-align: center;
-        padding: 1.5rem;
+        margin-bottom: 2rem;
     }
-    
-    .clara-feature-icon {
-        font-size: 2.5rem;
+    .clara-card {
+        background: linear-gradient(135deg, #8A2BE2, #6A0DAD);
+        color: white;
+        padding: 1.5rem;
+        border-radius: 15px;
+        margin: 1rem 0;
+    }
+    .metric-card {
+        background-color: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border-left: 5px solid #8A2BE2;
+        margin: 0.5rem 0;
+    }
+    .sidebar .sidebar-content {
+        background-color: #f0f2f6;
+    }
+    .clara-purple {
+        color: #8A2BE2;
+    }
+    .feature-icon {
+        font-size: 2rem;
         margin-bottom: 1rem;
     }
-    
-    .clara-btn-primary {
-        background: var(--clara-gold) !important;
-        color: var(--clara-dark) !important;
-        border: none !important;
-        font-weight: 600 !important;
-        padding: 0.75rem 1.5rem !important;
-        border-radius: 12px !important;
-    }
-    
-    .clara-step {
-        display: flex;
-        align-items: center;
-        margin: 1rem 0;
-        padding: 1.5rem;
-        background: var(--clara-light);
-        border-radius: 12px;
-        border-left: 4px solid var(--clara-gold);
-    }
-    
-    .clara-step-number {
-        background: var(--clara-gold);
-        color: var(--clara-dark);
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        margin-right: 1rem;
-        font-size: 1.2rem;
-    }
-    
-    .service-active {
-        border: 2px solid var(--clara-gold);
-        background: #fffbf0;
-    }
-    
-    .result-success {
-        border-left: 4px solid var(--clara-success);
-        background: #f0fdf4;
-    }
-    
-    .result-warning {
-        border-left: 4px solid var(--clara-warning);
-        background: #fffbeb;
-    }
-    
-    .result-danger {
-        border-left: 4px solid var(--clara-danger);
-        background: #fef2f2;
-    }
-    
-    .logo-container {
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-    }
-    
-    .logo-text {
-        font-family: 'Raleway', sans-serif;
-        font-weight: 600;
-        color: var(--clara-gold);
-        font-size: 1.8rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+</style>
+""", unsafe_allow_html=True)
 
-# -------------------------------------------------
-# Estado da Sessão
-# -------------------------------------------------
-if "current_view" not in st.session_state:
-    st.session_state.current_view = "home"
-if "profile" not in st.session_state:
-    st.session_state.profile = {"nome": "", "email": "", "cel": ""}
-if "premium" not in st.session_state:
-    st.session_state.premium = False
-if "free_runs_left" not in st.session_state:
-    st.session_state.free_runs_left = 3
-if "service_data" not in st.session_state:
-    st.session_state.service_data = {}
-if "active_service" not in st.session_state:
-    st.session_state.active_service = None
-if "user_authenticated" not in st.session_state:
-    st.session_state.user_authenticated = False
+# ==================================================
+# CABEÇALHO E APRESENTAÇÃO DA CLARA
+# ==================================================
 
-# -------------------------------------------------
-# Serviços - Casos Campeões
-# -------------------------------------------------
-SERVICES = {
-    "cancelamento_assinaturas": {
-        "title": "📝 Cancelamento de Assinaturas",
-        "icon": "📝",
-        "description": "Cancele academias, apps, TV e serviços de telefonia com argumentos jurídicos",
-        "category": "Consumidor",
-        "steps": [
-            "Informe os dados do serviço",
-            "Descreva o problema",
-            "Gere sua carta de cancelamento"
-        ]
-    },
-    "cobranca_indevida": {
-        "title": "💳 Cobrança Indevida",
-        "icon": "💳",
-        "description": "Dispute cobranças abusivas de bancos, cartões e consignados",
-        "category": "Financeiro",
-        "steps": [
-            "Informe os dados da cobrança",
-            "Descreva o problema",
-            "Gere seu recurso"
-        ]
-    },
-    "juros_abusivos": {
-        "title": "📊 Juros Abusivos & CET",
-        "icon": "📊",
-        "description": "Calcule juros abusivos e gere cartas para renegociação",
-        "category": "Financeiro",
-        "steps": [
-            "Informe os dados do empréstimo",
-            "Calcule o CET real",
-            "Gere sua carta de reclamação"
-        ]
-    },
-    "transporte_aereo": {
-        "title": "✈️ Transporte Aéreo (ANAC)",
-        "icon": "✈️",
-        "description": "Resolva problemas com atrasos, cancelamentos e extravios de bagagem",
-        "category": "Consumidor",
-        "steps": [
-            "Informe os dados do voo",
-            "Descreva o problema",
-            "Gere sua reclamação na ANAC"
-        ]
-    },
-    "telecom": {
-        "title": "📞 Telecom (ANATEL)",
-        "icon": "📞",
-        "description": "Resolva problemas com internet, telefone e TV por assinatura",
-        "category": "Consumidor",
-        "steps": [
-            "Informe os dados do serviço",
-            "Descreva o problema",
-            "Gere sua reclamação na ANATEL"
-        ]
-    },
-    "energia_agua": {
-        "title": "💡 Energia & Água",
-        "icon": "💡",
-        "description": "Dispute contas abusivas de energia elétrica e água",
-        "category": "Consumidor",
-        "steps": [
-            "Informe os dados da conta",
-            "Descreva o problema",
-            "Gere seu recurso à agência reguladora"
-        ]
-    },
-    "analise_contratos": {
-        "title": "📄 Análise de Contratos",
-        "icon": "📄",
-        "description": "Analise contratos complexos e identifique cláusulas problemáticas",
-        "category": "Jurídico",
-        "steps": [
-            "Envie o contrato",
-            "Configure a análise",
-            "Revise os resultados"
-        ]
-    },
-    "entender_editais": {
-        "title": "📑 Entender Editais",
-        "icon": "📑",
-        "description": "Simplifique a compreensão de editais públicos e licitações",
-        "category": "Jurídico",
-        "steps": [
-            "Envie o edital",
-            "Configure as áreas de interesse",
-            "Obtenha um resumo claro"
-        ]
-    }
-}
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    st.markdown('<h1 class="main-header">💜 Clara Ready</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="clara-subtitle">Sua Plataforma Inteligente de Gestão Financeira</p>', unsafe_allow_html=True)
 
-# -------------------------------------------------
-# Utils
-# -------------------------------------------------
-EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-PHONE_RE = re.compile(r"^\+?\d{10,15}$")
-
-def current_email() -> str:
-    return (st.session_state.profile.get("email") or "").strip().lower()
-
-def is_valid_email(v: str) -> bool:
-    return bool(EMAIL_RE.match((v or "").strip()))
-
-def is_valid_phone(v: str) -> bool:
-    digits = re.sub(r"\D", "", v or "")
-    return bool(PHONE_RE.match(digits))
-
-def is_premium() -> bool:
-    return st.session_state.premium
-
-def render_logo():
-    """Renderiza o logo da CLARA"""
+# O que é a Clara Ready
+with st.expander("🔍 **O que é a Clara Ready?**", expanded=True):
     st.markdown("""
-    <div class="logo-container">
-        <div class="logo-text">CLARA LAW</div>
-    </div>
-    <p style="color: var(--clara-blue); margin-top: -10px; font-size: 0.9rem;">
-    Inteligência para um mundo mais claro</p>
-    """, unsafe_allow_html=True)
+    **Clara Ready** é uma plataforma completa de gestão financeira desenvolvida para:
+    
+    💰 **Controlar suas finanças** de forma simples e intuitiva  
+    📈 **Analisar desempenho** com dashboards em tempo real  
+    🔮 **Projetar cenários** com simulações precisas  
+    📊 **Tomar decisões estratégicas** baseadas em dados  
+    🎯 **Otimizar resultados** com insights inteligentes
+    
+    *"Clara como suas finanças devem estar"* 💜
+    """)
 
-# -------------------------------------------------
-# Templates de Documentos
-# -------------------------------------------------
-def generate_cancellation_letter(service_data: Dict) -> str:
-    return f"""
-CARTA DE CANCELAMENTO - {service_data.get('servico', '').upper()}
+# ==================================================
+# FUNÇÕES PRINCIPAIS DO SISTEMA
+# ==================================================
 
-De: {service_data.get('nome', '')}
-E-mail: {service_data.get('email', '')}
-CPF: {service_data.get('cpf', '')}
+@st.cache_data
+def carregar_dados_exemplo():
+    """Carrega dados de exemplo para demonstração"""
+    np.random.seed(42)
+    
+    # Dados de receita mensal
+    meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dec']
+    receita = np.random.normal(100000, 20000, 12).cumsum() + 500000
+    
+    # Dados de categorias
+    categorias = ['Produtos Digitais', 'Consultoria', 'Assinaturas', 'Serviços', 'Suporte']
+    valores_categorias = np.random.randint(20000, 100000, 5)
+    
+    # Dados de desempenho temporal
+    datas = pd.date_range('2024-01-01', periods=180, freq='D')
+    tendencia = np.random.randn(180).cumsum() + 100
+    
+    return {
+        'meses': meses,
+        'receita': receita,
+        'categorias': categorias,
+        'valores_categorias': valores_categorias,
+        'datas': datas,
+        'tendencia': tendencia
+    }
 
-Para: {service_data.get('empresa', '')}
-CNPJ: {service_data.get('cnpj', '')}
+def calcular_metricas_financeiras(receita_bruta, custos_diretos, despesas_operacionais):
+    """Calcula métricas financeiras básicas"""
+    lucro_bruto = receita_bruta - custos_diretos
+    lucro_liquido = lucro_bruto - despesas_operacionais
+    margem_bruta = (lucro_bruto / receita_bruta) * 100 if receita_bruta > 0 else 0
+    margem_liquida = (lucro_liquido / receita_bruta) * 100 if receita_bruta > 0 else 0
+    
+    return {
+        'lucro_bruto': lucro_bruto,
+        'lucro_liquido': lucro_liquido,
+        'margem_bruta': margem_bruta,
+        'margem_liquida': margem_liquida
+    }
 
-Assunto: Cancelamento de assinatura/serviço
+def simular_investimento(capital_inicial, aporte_mensal, tempo_anos, taxa_anual):
+    """Simula investimento em renda fixa"""
+    meses = tempo_anos * 12
+    taxa_mensal = (1 + taxa_anual/100) ** (1/12) - 1
+    
+    montante = capital_inicial * (1 + taxa_mensal) ** meses
+    for i in range(meses):
+        montante += aporte_mensal * (1 + taxa_mensal) ** (meses - i - 1)
+    
+    total_investido = capital_inicial + (aporte_mensal * meses)
+    juros_obtidos = montante - total_investido
+    
+    return {
+        'montante': montante,
+        'total_investido': total_investido,
+        'juros_obtidos': juros_obtidos,
+        'rentabilidade': (juros_obtidos / total_investido) * 100
+    }
 
-Prezados Senhores,
+# ==================================================
+# SIDEBAR - NAVEGAÇÃO
+# ==================================================
 
-Venho por meio desta comunicar o CANCELAMENTO imediato da assinatura/serviço contratado junto à empresa {service_data.get('empresa', '')}, referente ao serviço: {service_data.get('servico', '')}.
+with st.sidebar:
+    st.image("https://via.placeholder.com/150x50/8A2BE2/FFFFFF?text=CLARA+READY", width=150)
+    st.markdown("---")
+    
+    st.markdown("### 📊 Navegação")
+    pagina = st.radio(
+        "Selecione a página:",
+        [
+            "🏠 Dashboard Principal",
+            "💰 Análise de Rentabilidade", 
+            "📈 Projeções Financeiras",
+            "💼 Simulações de Investimento",
+            "📋 Relatórios Personalizados",
+            "⚙️ Configurações"
+        ]
+    )
+    
+    st.markdown("---")
+    st.markdown("### 🎯 Métricas Rápidas")
+    st.metric("Saldo Disponível", "R$ 125.430")
+    st.metric("Receita do Mês", "R$ 85.240")
+    st.metric("Despesas", "R$ 42.180")
+    
+    st.markdown("---")
+    st.info("💡 **Dica Clara:** Monitore seu fluxo de caixa diariamente!")
 
-DADOS DO CONTRATO:
-- Número do contrato: {service_data.get('numero_contrato', 'Não informado')}
-- Data de início: {service_data.get('data_inicio', 'Não informada')}
-- Motivo do cancelamento: {service_data.get('motivo', '')}
+# ==================================================
+# PÁGINA: DASHBOARD PRINCIPAL
+# ==================================================
 
-{service_data.get('detalhes', '')}
-
-Com fundamento no Código de Defesa do Consumidor (Lei 8.078/90), em especial nos artigos 39 e 42, solicito:
-
-1. O cancelamento imediato do serviço;
-2. O bloqueio de quaisquer cobranças futuras;
-3. A confirmação do cancelamento por e-mail;
-4. O reembolso proporcional de eventuais valores pagos antecipadamente, se for o caso.
-
-Atenciosamente,
-
-{service_data.get('nome', '')}
-{service_data.get('email', '')}
-{service_data.get('telefone', '')}
-"""
-
-def generate_anac_complaint(service_data: Dict) -> str:
-    return f"""
-RECLAMAÇÃO ANAC - {service_data.get('companhia', '').upper()}
-
-DADOS DO PASSAGEIRO:
-Nome: {service_data.get('nome', '')}
-CPF: {service_data.get('cpf', '')}
-E-mail: {service_data.get('email', '')}
-Telefone: {service_data.get('telefone', '')}
-
-DADOS DO VOO:
-Companhia Aérea: {service_data.get('companhia', '')}
-Número do Voo: {service_data.get('numero_voo', '')}
-Data do Voo: {service_data.get('data_voo', '')}
-Origem: {service_data.get('origem', '')}
-Destino: {service_data.get('destino', '')}
-
-DESCRIÇÃO DO PROBLEMA:
-Tipo: {service_data.get('problema', '')}
-Descrição detalhada: {service_data.get('detalhes', '')}
-Data/Hora do ocorrido: {service_data.get('data_ocorrido', '')}
-
-PREJUÍZOS IDENTIFICADOS:
-{service_data.get('prejuizos', '')}
-
-COM BASE NA RESOLUÇÃO ANAC 400/2016, SOLICITO:
-
-1. {service_data.get('solicitacao1', 'Providências imediatas para resolver o ocorrido')}
-2. {service_data.get('solicitacao2', 'Indenização conforme previsto em lei')}
-3. {service_data.get('solicitacao3', 'Resposta formal em até 30 dias')}
-
-Atenciosamente,
-
-{service_data.get('nome', '')}
-"""
-
-def generate_anatel_complaint(service_data: Dict) -> str:
-    return f"""
-RECLAMAÇÃO ANATEL - {service_data.get('operadora', '').upper()}
-
-DADOS DO CLIENTE:
-Nome: {service_data.get('nome', '')}
-CPF: {service_data.get('cpf', '')}
-E-mail: {service_data.get('email', '')}
-Telefone: {service_data.get('telefone', '')}
-
-DADOS DO SERVIÇO:
-Operadora: {service_data.get('operadora', '')}
-Tipo de Serviço: {service_data.get('tipo_servico', '')}
-Número do Contrato: {service_data.get('numero_contrato', '')}
-Endereço de Instalação: {service_data.get('endereco', '')}
-
-DESCRIÇÃO DO PROBLEMA:
-{service_data.get('problema', '')}
-
-Data do início do problema: {service_data.get('data_inicio', '')}
-Já contactou a operadora? {service_data.get('contatou_operadora', 'Não')}
-Protocolo na operadora: {service_data.get('protocolo_operadora', 'Não informado')}
-
-DETALHES:
-{service_data.get('detalhes', '')}
-
-SOLICITAÇÃO:
-De acordo com o Código de Defesa do Consumidor e regulamentação da ANATEL, solicito:
-
-1. {service_data.get('solicitacao1', 'Solução imediata do problema relatado')}
-2. {service_data.get('solicitacao2', 'Indenização pelos danos sofridos')}
-3. {service_data.get('solicitacao3', 'Cancelamento sem multa, se for o caso')}
-
-Atenciosamente,
-
-{service_data.get('nome', '')}
-"""
-
-def generate_utility_complaint(service_data: Dict) -> str:
-    return f"""
-RECLAMAÇÃO - {service_data.get('concessionaria', '').upper()}
-
-DADOS DO CLIENTE:
-Nome: {service_data.get('nome', '')}
-CPF: {service_data.get('cpf', '')}
-E-mail: {service_data.get('email', '')}
-Telefone: {service_data.get('telefone', '')}
-Endereço: {service_data.get('endereco', '')}
-
-DADOS DO SERVIÇO:
-Concessionária: {service_data.get('concessionaria', '')}
-Tipo de Serviço: {service_data.get('tipo_conta', '')}
-Número da Conta: {service_data.get('numero_conta', '')}
-Referência: {service_data.get('referencia', '')}
-
-DESCRIÇÃO DO PROBLEMA:
-{service_data.get('problema', '')}
-
-Valor Contestado: R$ {service_data.get('valor_contestado', '')}
-Data da Conta: {service_data.get('data_conta', '')}
-Leitura Anterior: {service_data.get('leitura_anterior', '')}
-Leitura Atual: {service_data.get('leitura_atual', '')}
-
-DETALHES DA CONTESTAÇÃO:
-{service_data.get('detalhes', '')}
-
-COM BASE NO CÓDIGO DE DEFESA DO CONSUMIDOR, SOLICITO:
-
-1. Revisão imediata da conta
-2. Correção dos valores cobrados indevidamente
-3. Explicação detalhada sobre os reajustes
-4. Resposta formal em até 30 dias
-
-Atenciosamente,
-
-{service_data.get('nome', '')}
-"""
-
-def generate_billing_complaint(service_data: Dict) -> str:
-    return f"""
-RECURSO DE COBRANÇA INDEVIDA - {service_data.get('empresa', '').upper()}
-
-DADOS DO CLIENTE:
-Nome: {service_data.get('nome', '')}
-CPF: {service_data.get('cpf', '')}
-E-mail: {service_data.get('email', '')}
-Telefone: {service_data.get('telefone', '')}
-
-DADOS DA COBRANÇA:
-Empresa: {service_data.get('empresa', '')}
-Tipo de Cobrança: {service_data.get('tipo_cobranca', '')}
-Valor Cobrado: R$ {service_data.get('valor_cobranca', '')}
-Data da Cobrança: {service_data.get('data_cobranca', '')}
-Número do Documento: {service_data.get('numero_nota', '')}
-
-MOTIVO DA CONTESTAÇÃO:
-{service_data.get('descricao', '')}
-
-Já realizou reclamação anterior? {service_data.get('ja_reclamou', 'Não')}
-
-FUNDAMENTAÇÃO JURÍDICA:
-Com base no Código de Defesa do Consumidor (Lei 8.078/90), especialmente nos artigos 39 (práticas abusivas) e 42 (cobrança de dívidas), solicito:
-
-1. Cancelamento imediato da cobrança indevida
-2. Estorno do valor cobrado, se for o caso
-3. Retificação dos registros cadastrais
-4. Compensação por danos morais, quando aplicável
-
-Atenciosamente,
-
-{service_data.get('nome', '')}
-"""
-
-# -------------------------------------------------
-# Componentes de Interface
-# -------------------------------------------------
-def render_navigation():
-    """Navegação principal"""
-    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
+if pagina == "🏠 Dashboard Principal":
+    st.header("🏠 Dashboard Principal - Visão Clara")
+    
+    # Carregar dados
+    dados = carregar_dados_exemplo()
+    
+    # Métricas principais em tempo real
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        render_logo()
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.metric(
+            label="💳 Receita Total",
+            value="R$ 1.254.300",
+            delta="12.5%",
+            delta_color="normal"
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
-        if st.button("🏠 Início", use_container_width=True, key="nav_home"):
-            st.session_state.current_view = "home"
-            st.session_state.active_service = None
-            st.rerun()
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.metric(
+            label="📈 Lucro Líquido", 
+            value="R$ 352.180",
+            delta="8.3%",
+            delta_color="normal"
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with col3:
-        if st.button("🛡️ Serviços", use_container_width=True, key="nav_services"):
-            st.session_state.current_view = "services"
-            st.session_state.active_service = None
-            st.rerun()
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.metric(
+            label="🎯 ROI",
+            value="28.7%",
+            delta="3.2%",
+            delta_color="normal"
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with col4:
-        if st.button("⭐ Premium", use_container_width=True, key="nav_premium"):
-            st.session_state.current_view = "premium"
-            st.rerun()
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.metric(
+            label="👥 Clientes Ativos",
+            value="154",
+            delta="5.2%",
+            delta_color="normal"
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    with col5:
-        if st.button("ℹ️ Sobre", use_container_width=True, key="nav_about"):
-            st.session_state.current_view = "about"
-            st.rerun()
-
-def render_hero_section():
-    """Hero section impactante"""
-    st.markdown("""
-    <div class="clara-hero">
-        <div class="clara-hero-content">
-            <div class="clara-badge">⚖️ ASSISTENTE JURÍDICA PESSOAL</div>
-            <h1 class="clara-title">Resolva problemas jurídicos sem advogado caro</h1>
-            <p class="clara-subtitle">
-                Use a inteligência artificial da CLARA para cancelar assinaturas, disputar cobranças, 
-                reclamar de voos atrasados e muito mais. Rápido, simples e eficaz.
-            </p>
-    """, unsafe_allow_html=True)
+    # Gráficos principais
+    col1, col2 = st.columns(2)
     
-    col1, col2, col3 = st.columns([1, 2, 1])
+    with col1:
+        st.subheader("📈 Evolução da Receita Mensal")
+        
+        revenue_data = pd.DataFrame({
+            'Mês': dados['meses'],
+            'Receita': dados['receita']
+        })
+        
+        fig_line = px.line(
+            revenue_data,
+            x='Mês',
+            y='Receita',
+            title='',
+            markers=True,
+            line_shape='spline'
+        )
+        fig_line.update_layout(
+            height=400,
+            showlegend=False,
+            plot_bgcolor='rgba(0,0,0,0)',
+            yaxis_title="Receita (R$)"
+        )
+        fig_line.update_traces(line=dict(color='#8A2BE2', width=3))
+        st.plotly_chart(fig_line, use_container_width=True)
+    
     with col2:
-        if st.button("👉 Ver Serviços Disponíveis", use_container_width=True, type="primary"):
-            st.session_state.current_view = "services"
-            st.rerun()
+        st.subheader("🍰 Distribuição por Categoria")
+        
+        category_data = pd.DataFrame({
+            'Categoria': dados['categorias'],
+            'Valor': dados['valores_categorias']
+        })
+        
+        fig_pie = px.pie(
+            category_data,
+            values='Valor',
+            names='Categoria',
+            title='',
+            color_discrete_sequence=px.colors.sequential.Viridis
+        )
+        fig_pie.update_layout(height=400)
+        st.plotly_chart(fig_pie, use_container_width=True)
     
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    # Tabela de desempenho detalhada
+    st.subheader("📊 Desempenho por Segmento")
+    
+    performance_data = pd.DataFrame({
+        'Segmento': ['Varejo Digital', 'Corporate', 'E-commerce', 'Serviços Premium', 'Consultoria'],
+        'Receita (R$)': [285000, 335000, 230000, 215000, 189300],
+        'Crescimento (%)': [15.2, 8.7, 25.4, 12.1, 18.3],
+        'Meta Atingida (%)': [95, 88, 110, 92, 105],
+        'Lucratividade (%)': [22.5, 18.3, 28.7, 32.1, 35.4]
+    })
+    
+    st.dataframe(
+        performance_data.style.format({
+            'Receita (R$)': 'R$ {:,.0f}',
+            'Crescimento (%)': '{:.1f}%',
+            'Meta Atingida (%)': '{:.0f}%',
+            'Lucratividade (%)': '{:.1f}%'
+        }),
+        use_container_width=True
+    )
+    
+    # Alertas e insights
+    st.subheader("🔔 Insights da Clara")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown('<div class="clara-card">', unsafe_allow_html=True)
+        st.markdown("### 💡")
+        st.markdown("**Oportunidade:** Seu segmento de Consultoria tem a maior lucratividade (35.4%)")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="clara-card">', unsafe_allow_html=True)
+        st.markdown("### ⚠️")
+        st.markdown("**Atenção:** Segmento Corporate está abaixo da meta (88%)")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown('<div class="clara-card">', unsafe_allow_html=True)
+        st.markdown("### 🎯")
+        st.markdown("**Meta:** E-commerce superou expectativas (110% da meta)")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-def render_services_grid():
-    """Grid de serviços funcionais"""
-    st.markdown("""
-    <div style='text-align: center; margin: 3rem 0;'>
-        <h2>Como a CLARA pode te ajudar hoje?</h2>
-        <p>Escolha o serviço que você precisa:</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Filtros por categoria
-    categories = list(set([service["category"] for service in SERVICES.values()]))
-    selected_category = st.selectbox("Filtrar por categoria:", ["Todos"] + categories)
-    
-    # Layout responsivo com colunas
-    services_list = []
-    for service_id, service in SERVICES.items():
-        if selected_category != "Todos" and service["category"] != selected_category:
-            continue
-        services_list.append((service_id, service))
-    
-    # Organizar em grid responsivo
-    cols = st.columns(2)
-    for idx, (service_id, service) in enumerate(services_list):
-        col = cols[idx % 2]
-        
-        with col:
-            is_active = st.session_state.active_service == service_id
-            card_class = "clara-card service-active" if is_active else "clara-card"
-            
-            st.markdown(f"""
-            <div class="{card_class}">
-                <div style='text-align: center;'>
-                    <div class="clara-feature-icon">{service['icon']}</div>
-                    <h3>{service['title']}</h3>
-                    <p style='color: var(--clara-gray); margin-bottom: 1.5rem;'>{service['description']}</p>
-                    <small style='color: var(--clara-gold); font-weight: 600;'>{service['category']}</small>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if st.button(f"Usar {service['title'].split(' ')[0]}", key=f"btn_{service_id}", use_container_width=True):
-                st.session_state.active_service = service_id
-                st.session_state.current_view = "service_detail"
-                st.rerun()
+# ==================================================
+# PÁGINA: ANÁLISE DE RENTABILIDADE
+# ==================================================
 
-def render_service_detail():
-    """Detalhe do serviço selecionado"""
-    if not st.session_state.active_service:
-        st.session_state.current_view = "services"
-        st.rerun()
-        return
+elif pagina == "💰 Análise de Rentabilidade":
+    st.header("💰 Análise de Rentabilidade Detalhada")
     
-    service = SERVICES[st.session_state.active_service]
-    
-    st.markdown(f"""
-    <div style='text-align: center; margin-bottom: 2rem;'>
-        <h1>{service['icon']} {service['title']}</h1>
-        <p>{service['description']}</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Botão voltar
-    if st.button("← Voltar para Serviços", key="back_to_services"):
-        st.session_state.current_view = "services"
-        st.rerun()
-    
-    # Mostrar etapas do processo
-    st.markdown("### 📋 Como funciona:")
-    for i, step in enumerate(service["steps"], 1):
-        st.markdown(f"""
-        <div class="clara-step">
-            <div class="clara-step-number">{i}</div>
-            <div>
-                <strong>{step}</strong>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Formulário específico do serviço
-    st.markdown("### 🎯 Preencha as informações:")
-    
-    service_data = st.session_state.service_data.get(st.session_state.active_service, {})
-    
-    if st.session_state.active_service == "cancelamento_assinaturas":
-        render_cancellation_service(service_data)
-    elif st.session_state.active_service == "cobranca_indevida":
-        render_billing_service(service_data)
-    elif st.session_state.active_service == "juros_abusivos":
-        render_interest_service(service_data)
-    elif st.session_state.active_service == "transporte_aereo":
-        render_airline_service(service_data)
-    elif st.session_state.active_service == "telecom":
-        render_telecom_service(service_data)
-    elif st.session_state.active_service == "energia_agua":
-        render_utility_service(service_data)
-    elif st.session_state.active_service == "analise_contratos":
-        render_contract_analysis()
-    elif st.session_state.active_service == "entender_editais":
-        render_edital_analysis()
-
-def render_cancellation_service(service_data: Dict):
-    """Serviço de cancelamento de assinaturas"""
-    with st.form("cancellation_form"):
-        st.subheader("📋 Dados do Serviço")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            empresa = st.text_input("Nome da Empresa*", value=service_data.get('empresa', ''))
-            servico = st.text_input("Tipo de Serviço*", value=service_data.get('servico', ''))
-            numero_contrato = st.text_input("Número do Contrato", value=service_data.get('numero_contrato', ''))
-        
-        with col2:
-            cnpj = st.text_input("CNPJ da Empresa", value=service_data.get('cnpj', ''))
-            data_inicio = st.date_input("Data de Início", value=service_data.get('data_inicio', datetime.now()))
-            valor_mensal = st.number_input("Valor Mensal (R$)", value=service_data.get('valor_mensal', 0.0))
-        
-        st.subheader("🎯 Motivo do Cancelamento")
-        motivo = st.selectbox("Motivo Principal*", [
-            "Serviço insatisfatório",
-            "Cobranças indevidas", 
-            "Não consigo cancelar",
-            "Mudança de endereço",
-            "Problemas técnicos",
-            "Outro"
-        ])
-        
-        detalhes = st.text_area("Descreva detalhadamente o problema*", 
-                               value=service_data.get('detalhes', ''),
-                               height=100,
-                               placeholder="Exemplo: Tentei cancelar pelo app mas não consegui, continuam cobrando mesmo após solicitação de cancelamento...")
-        
-        if st.form_submit_button("📄 Gerar Carta de Cancelamento", use_container_width=True):
-            if empresa and servico and motivo and detalhes:
-                letter_data = {
-                    'empresa': empresa,
-                    'servico': servico,
-                    'numero_contrato': numero_contrato,
-                    'cnpj': cnpj,
-                    'data_inicio': data_inicio.strftime("%d/%m/%Y"),
-                    'valor_mensal': valor_mensal,
-                    'motivo': motivo,
-                    'detalhes': detalhes,
-                    'nome': st.session_state.profile.get('nome', ''),
-                    'email': st.session_state.profile.get('email', ''),
-                    'cpf': st.session_state.profile.get('cpf', ''),
-                    'telefone': st.session_state.profile.get('cel', '')
-                }
-                
-                carta = generate_cancellation_letter(letter_data)
-                
-                st.success("✅ Carta gerada com sucesso!")
-                st.download_button(
-                    "📥 Baixar Carta de Cancelamento",
-                    data=carta,
-                    file_name=f"carta_cancelamento_{empresa}.txt",
-                    mime="text/plain"
-                )
-                
-                with st.expander("📋 Visualizar Carta"):
-                    st.text_area("Sua carta:", carta, height=300)
-            else:
-                st.error("⚠️ Preencha todos os campos obrigatórios (*)")
-
-def render_billing_service(service_data: Dict):
-    """Serviço de cobrança indevida"""
-    st.info("💡 **Dica:** Use este serviço para disputar cobranças de bancos, cartões de crédito, empréstimos consignados e outras cobranças não autorizadas.")
-    
-    with st.form("billing_form"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            empresa = st.text_input("Nome da Empresa/Banco*", value=service_data.get('empresa', ''))
-            tipo_cobranca = st.selectbox("Tipo de Cobrança*", [
-                "Cartão de Crédito",
-                "Empréstimo Consignado", 
-                "Tarifa Bancária",
-                "Assinatura Não Autorizada",
-                "Seguro",
-                "Outro"
-            ])
-            valor_cobranca = st.number_input("Valor Cobrado (R$)*", value=service_data.get('valor_cobranca', 0.0))
-        
-        with col2:
-            data_cobranca = st.date_input("Data da Cobrança*", value=service_data.get('data_cobranca', datetime.now()))
-            numero_nota = st.text_input("Número da Nota/Fatura", value=service_data.get('numero_nota', ''))
-            ja_reclamou = st.selectbox("Já reclamou com a empresa?", ["Não", "Sim - Sem resposta", "Sim - Resposta insatisfatória"])
-        
-        descricao = st.text_area("Descreva por que esta cobrança é indevida*",
-                                height=100,
-                                placeholder="Exemplo: Esta cobrança apareceu sem minha autorização, nunca contratei este serviço...")
-        
-        if st.form_submit_button("📄 Gerar Recurso", use_container_width=True):
-            if empresa and tipo_cobranca and descricao:
-                complaint_data = {
-                    'empresa': empresa,
-                    'tipo_cobranca': tipo_cobranca,
-                    'valor_cobranca': valor_cobranca,
-                    'data_cobranca': data_cobranca.strftime("%d/%m/%Y"),
-                    'numero_nota': numero_nota,
-                    'ja_reclamou': ja_reclamou,
-                    'descricao': descricao,
-                    'nome': st.session_state.profile.get('nome', ''),
-                    'email': st.session_state.profile.get('email', ''),
-                    'cpf': st.session_state.profile.get('cpf', ''),
-                    'telefone': st.session_state.profile.get('cel', '')
-                }
-                
-                carta = generate_billing_complaint(complaint_data)
-                
-                st.success("✅ Recurso gerado com sucesso!")
-                st.download_button(
-                    "📥 Baixar Recurso",
-                    data=carta,
-                    file_name=f"recurso_cobranca_{empresa}.txt",
-                    mime="text/plain"
-                )
-                
-                with st.expander("📋 Visualizar Recurso"):
-                    st.text_area("Seu recurso:", carta, height=300)
-            else:
-                st.error("⚠️ Preencha todos os campos obrigatórios (*)")
-
-def render_interest_service(service_data: Dict):
-    """Serviço de juros abusivos"""
-    st.info("💡 **Dica:** Calcule o CET real do seu empréstimo e gere uma carta para renegociação.")
-    
-    tab1, tab2 = st.tabs(["🧮 Calculadora CET", "📄 Carta de Renegociação"])
+    tab1, tab2, tab3 = st.tabs(["📊 Métricas Principais", "📈 Análise de Margens", "🎯 Ponto de Equilíbrio"])
     
     with tab1:
-        st.subheader("Calculadora de Custo Efetivo Total")
+        st.subheader("Indicadores de Rentabilidade")
         
         col1, col2 = st.columns(2)
+        
         with col1:
-            valor_emprestimo = st.number_input("Valor do Empréstimo (R$)*", min_value=0.0, value=1000.0)
-            taxa_mensal = st.number_input("Taxa de Juros Mensal (%)*", min_value=0.0, value=5.0)
+            st.markdown("### 💰 Entradas")
+            receita_bruta = st.number_input("Receita Bruta (R$):", value=1250000, step=50000, key="rb1")
+            custos_diretos = st.number_input("Custos Diretos (R$):", value=650000, step=50000, key="cd1")
+            despesas_operacionais = st.number_input("Despesas Operacionais (R$):", value=250000, step=10000, key="do1")
+            
+            # Cálculos
+            metricas = calcular_metricas_financeiras(receita_bruta, custos_diretos, despesas_operacionais)
         
         with col2:
-            parcelas = st.number_input("Número de Parcelas*", min_value=1, value=12)
-            taxas_adicionais = st.number_input("Taxas Adicionais (R$)", min_value=0.0, value=50.0)
-        
-        if st.button("Calcular CET", use_container_width=True):
-            try:
-                cet = compute_cet_quick(valor_emprestimo, taxa_mensal/100, int(parcelas), taxas_adicionais)
-                st.success(f"**CET Calculado:** {cet*100:.2f}% ao mês")
-                
-                if cet * 100 > 10:
-                    st.error("⚠️ Esta taxa está muito acima da média de mercado! Recomendamos negociar.")
-                elif cet * 100 > 5:
-                    st.warning("⚠️ Esta taxa está acima da média. Pode valer a pena negociar.")
-                else:
-                    st.success("✅ Taxa dentro dos parâmetros razoáveis.")
-                    
-            except Exception as e:
-                st.error(f"Erro no cálculo: {str(e)}")
+            st.markdown("### 📈 Resultados")
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("💸 Lucro Bruto", f"R$ {metricas['lucro_bruto']:,.0f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("💰 Lucro Líquido", f"R$ {metricas['lucro_liquido']:,.0f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("📊 Margem Bruta", f"{metricas['margem_bruta']:.1f}%")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("🎯 Margem Líquida", f"{metricas['margem_liquida']:.1f}%")
+            st.markdown('</div>', unsafe_allow_html=True)
     
     with tab2:
-        st.subheader("Carta de Renegociação")
+        st.subheader("📈 Análise de Margens por Segmento")
         
-        with st.form("interest_letter_form"):
-            empresa = st.text_input("Nome do Banco/Financeira*")
-            numero_contrato = st.text_input("Número do Contrato*")
-            valor_original = st.number_input("Valor Original do Empréstimo (R$)*", min_value=0.0)
-            cet_atual = st.number_input("CET Atual (%)*", min_value=0.0, value=8.0)
-            cet_proposto = st.number_input("CET
+        # Dados para análise de margens
+        segmentos = ['Varejo Digital', 'Corporate', 'E-commerce', 'Serviços Premium', 'Consultoria']
+        margens_brutas = [25.3, 22.1, 30.5, 35.2, 42.8]
+        margens_liquidas = [18.5, 15.3, 25.7, 28.1, 35.4]
+        
+        fig_margens = go.Figure()
+        
+        fig_margens.add_trace(go.Bar(
+            name='Margem Bruta',
+            x=segmentos,
+            y=margens_brutas,
+            marker_color='#8A2BE2'
+        ))
+        
+        fig_margens.add_trace(go.Bar(
+            name='Margem Líquida',
+            x=segmentos,
+            y=margens_liquidas,
+            marker_color='#6A0DAD'
+        ))
+        
+        fig_margens.update_layout(
+            title="Comparativo de Margens por Segmento",
+            barmode='group',
+            height=500,
+            showlegend=True
+        )
+        
+        st.plotly_chart(fig_margens, use_container_width=True)
+        
+        # Análise comparativa
+        st.subheader("📋 Análise Comparativa")
+        analise_data = pd.DataFrame({
+            'Segmento': segmentos,
+            'Margem Bruta (%)': margens_brutas,
+            'Margem Líquida (%)': margens_liquidas,
+            'Eficiência (%)': [margens_liquidas[i]/margens_brutas[i]*100 for i in range(len(segmentos))]
+        })
+        
+        st.dataframe(analise_data.style.format({
+            'Margem Bruta (%)': '{:.1f}%',
+            'Margem Líquida (%)': '{:.1f}%',
+            'Eficiência (%)': '{:.1f}%'
+        }), use_container_width=True)
+    
+    with tab3:
+        st.subheader("🎯 Análise de Ponto de Equilíbrio")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 📊 Dados de Entrada")
+            custos_fixos = st.number_input("Custos Fixos Mensais (R$):", value=185000, step=10000, key="cf1")
+            preco_medio = st.number_input("Preço Médio por Unidade (R$):", value=150, step=10, key="pm1")
+            custo_variavel_unitario = st.number_input("Custo Variável Unitário (R$):", value=65, step=5, key="cvu1")
+            unidades_vendidas = st.number_input("Unidades Vendidas (Mês):", value=2500, step=100, key="uv1")
+        
+        with col2:
+            st.markdown("### 📈 Resultados")
+            
+            margem_contribuicao = preco_medio - custo_variavel_unitario
+            ponto_equilibrio = custos_fixos / margem_contribuicao if margem_contribuicao > 0 else 0
+            margem_seguranca = ((unidades_vendidas - ponto_equilibrio) / unidades_vendidas) * 100 if unidades_vendidas > 0 else 0
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("💰 Margem de Contribuição", f"R$ {margem_contribuicao:.2f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("🎯 Ponto de Equilíbrio", f"{ponto_equilibrio:.0f} unidades")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("🛡️ Margem de Segurança", f"{margem_seguranca:.1f}%")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Análise de viabilidade
+            if margem_seguranca > 20:
+                st.success("✅ **Excelente!** Margem de segurança acima de 20%")
+            elif margem_seguranca > 10:
+                st.warning("⚠️ **Atenção!** Margem de segurança entre 10-20%")
+            else:
+                st.error("❌ **Crítico!** Margem de segurança abaixo de 10%")
 
+# ==================================================
+# PÁGINA: PROJEÇÕES FINANCEIRAS
+# ==================================================
+
+elif pagina == "📈 Projeções Financeiras":
+    st.header("🔮 Projeções Financeiras - Planejamento Estratégico")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📊 Parâmetros de Projeção")
+        
+        receita_atual = st.number_input("Receita Atual (R$):", value=1250000, step=50000, key="ra1")
+        taxa_crescimento = st.slider("Taxa de Crescimento Anual (%):", 0.0, 50.0, 15.0, 0.5, key="tc1")
+        anos_projecao = st.slider("Anos de Projeção:", 1, 10, 5, key="ap1")
+    
+    with col2:
+        st.subheader("🎯 Otimização de Margens")
+        
+        margem_atual = st.number_input("Margem Líquida Atual (%):", value=12.5, step=0.5, key="ma1")
+        melhoria_margem = st.slider("Melhoria Anual da Margem (%):", 0.0, 5.0, 1.2, 0.1, key="mm1")
+        inflacao_esperada = st.slider("Inflação Esperada (% ao ano):", 0.0, 15.0, 4.5, 0.1, key="ie1")
+    
+    # Calcular projeções
+    anos = list(range(1, anos_projecao + 1))
+    receitas = []
+    lucros = []
+    receitas_reais = []
+    
+    receita_projetada = receita_atual
+    margem_projetada = margem_atual
+    
+    for ano in anos:
+        receita_nominal = receita_projetada
+        lucro_nominal = receita_nominal * (margem_projetada / 100)
+        
+        # Ajuste pela inflação
+        receita_real = receita_nominal / ((1 + inflacao_esperada/100) ** (ano-1))
+        
+        receitas.append(receita_nominal)
+        lucros.append(lucro_nominal)
+        receitas_reais.append(receita_real)
+        
+        receita_projetada *= (1 + taxa_crescimento / 100)
+        margem_projetada += melhoria_margem
+    
+    # Criar DataFrame para projeções
+    proj_data = pd.DataFrame({
+        'Ano': anos,
+        'Receita_Nominal': receitas,
+        'Receita_Real': receitas_reais,
+        'Lucro_Projetado': lucros,
+        'Margem_Projetada': [margem_atual + (melhoria_margem * i) for i in range(anos_projecao)]
+    })
+    
+    # Gráfico de projeção
+    st.subheader("📈 Projeção de Receita e Lucro")
+    
+    fig_proj = go.Figure()
+    
+    fig_proj.add_trace(go.Scatter(
+        x=proj_data['Ano'], 
+        y=proj_data['Receita_Nominal'],
+        mode='lines+markers',
+        name='Receita Nominal',
+        line=dict(color='#8A2BE2', width=3)
+    ))
+    
+    fig_proj.add_trace(go.Scatter(
+        x=proj_data['Ano'], 
+        y=proj_data['Receita_Real'],
+        mode='lines+markers',
+        name='Receita Real (ajustada)',
+        line=dict(color='#6A0DAD', width=3, dash='dash')
+    ))
+    
+    fig_proj.add_trace(go.Scatter(
+        x=proj_data['Ano'], 
+        y=proj_data['Lucro_Projetado'],
+        mode='lines+markers',
+        name='Lucro Projetado',
+        line=dict(color='#00CC96', width=3)
+    ))
+    
+    fig_proj.update_layout(
+        title='Projeção Financeira - Próximos Anos',
+        xaxis_title='Ano',
+        yaxis_title='Valor (R$)',
+        height=500,
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig_proj, use_container_width=True)
+    
+    # Tabela de projeções detalhada
+    st.subheader("📋 Tabela de Projeções Detalhada")
+    
+    proj_data_display = proj_data.copy()
+    proj_data_display['Receita_Nominal'] = proj_data_display['Receita_Nominal'].apply(lambda x: f"R$ {x:,.0f}")
+    proj_data_display['Receita_Real'] = proj_data_display['Receita_Real'].apply(lambda x: f"R$ {x:,.0f}")
+    proj_data_display['Lucro_Projetado'] = proj_data_display['Lucro_Projetado'].apply(lambda x: f"R$ {x:,.0f}")
+    proj_data_display['Margem_Projetada'] = proj_data_display['Margem_Projetada'].apply(lambda x: f"{x:.1f}%")
+    
+    st.dataframe(proj_data_display, use_container_width=True)
+    
+    # Análise de cenários
+    st.subheader("🔄 Análise de Cenários")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("### 📈 Cenário Otimista")
+        st.metric("Receita 5 anos", "R$ 2.8M", "124%")
+        st.metric("Lucro Acumulado", "R$ 450K", "28% margem")
+    
+    with col2:
+        st.markdown("### 📊 Cenário Realista")
+        st.metric("Receita 5 anos", "R$ 2.1M", "68%")
+        st.metric("Lucro Acumulado", "R$ 320K", "22% margem")
+    
+    with col3:
+        st.markdown("### 📉 Cenário Conservador")
+        st.metric("Receita 5 anos", "R$ 1.6M", "28%")
+        st.metric("Lucro Acumulado", "R$ 240K", "18% margem")
+
+# ==================================================
+# PÁGINA: SIMULAÇÕES DE INVESTIMENTO
+# ==================================================
+
+elif pagina == "💼 Simulações de Investimento":
+    st.header("💼 Simulações de Investimento - Clara Invest")
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["💰 Renda Fixa", "📈 Ações", "🏠 Fundos Imobiliários", "🔗 Carteira Recomendada"])
+    
+    with tab1:
+        st.subheader("💰 Renda Fixa - CDB/Tesouro Direto")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 📊 Parâmetros do Investimento")
+            capital_inicial = st.number_input("Capital Inicial (R$):", value=25000, step=1000, key="ci1")
+            aporte_mensal = st.number_input("Aporte Mensal (R$):", value=2000, step=100, key="am1")
+            tempo_anos = st.slider("Tempo de Investimento (anos):", 1, 30, 10, key="ti1")
+            taxa_anual = st.slider("Taxa Anual (% a.a.):", 0.1, 20.0, 11.5, 0.1, key="ta1")
+        
+        with col2:
+            st.markdown("### 📈 Resultados da Simulação")
+            
+            resultado = simular_investimento(capital_inicial, aporte_mensal, tempo_anos, taxa_anual)
+            
+            st.markdown('<div class="clara-card">', unsafe_allow_html=True)
+            st.metric("🏦 Montante Final", f"R$ {resultado['montante']:,.2f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("💵 Total Investido", f"R$ {resultado['total_investido']:,.0f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("🎯 Juros Obtidos", f"R$ {resultado['juros_obtidos']:,.2f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("📊 Rentabilidade Total", f"{resultado['rentabilidade']:.1f}%")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Gráfico de evolução
+        st.subheader("📊 Evolução do Patrimônio")
+        
+        # Simular evolução ano a ano
+        anos_evolucao = list(range(1, tempo_anos + 1))
+        patrimonio = []
+        
+        for ano in anos_evolucao:
+            sim_ano = simular_investimento(capital_inicial, aporte_mensal, ano, taxa_anual)
+            patrimonio.append(sim_ano['montante'])
+        
+        fig_evolucao = px.line(
+            x=anos_evolucao,
+            y=patrimonio,
+            title=f"Evolução do Patrimônio - {tempo_anos} anos",
+            labels={'x': 'Ano', 'y': 'Patrimônio (R$)'}
+        )
+        fig_evolucao.update_traces(line=dict(color='#8A2BE2', width=3))
+        fig_evolucao.update_layout(height=400)
+        
+        st.plotly_chart(fig_evolucao, use_container_width=True)
+    
+    with tab2:
+        st.subheader("📈 Renda Variável - Ações")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 💹 Parâmetros do Investimento")
+            preco_acao = st.number_input("Preço por Ação (R$):", value=85.50, step=1.0, key="pa1")
+            qtd_acoes = st.number_input("Quantidade de Ações:", value=500, step=10, key="qa1")
+            dividend_yield = st.slider("Dividend Yield Anual (%):", 0.1, 15.0, 6.5, 0.1, key="dy1")
+            valorizacao_anual = st.slider("Valorização Anual Esperada (%):", -5.0, 30.0, 14.2, 0.5, key="va1")
+            tempo_investimento = st.slider("Tempo de Investimento (anos):", 1, 30, 8, key="ti2")
+        
+        with col2:
+            st.markdown("### 💰 Resultados da Simulação")
+            
+            # Cálculos
+            investimento_inicial = preco_acao * qtd_acoes
+            valor_final_acoes = investimento_inicial * (1 + valorizacao_anual/100) ** tempo_investimento
+            dividendos_anuais = investimento_inicial * (dividend_yield/100)
+            
+            # Calcular dividendos compostos
+            total_dividendos = 0
+            for ano in range(1, tempo_investimento + 1):
+                dividendos_ano = dividendos_anuais * (1 + valorizacao_anual/100) ** (ano - 1)
+                total_dividendos += dividendos_ano
+            
+            retorno_total = valor_final_acoes + total_dividendos
+            lucro_total = retorno_total - investimento_inicial
+            rentabilidade_total = (lucro_total / investimento_inicial) * 100
+            
+            st.markdown('<div class="clara-card">', unsafe_allow_html=True)
+            st.metric("💎 Valor Final das Ações", f"R$ {valor_final_acoes:,.2f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("💰 Total em Dividendos", f"R$ {total_dividendos:,.2f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("🎯 Retorno Total", f"R$ {retorno_total:,.2f}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("📈 Rentabilidade Total", f"{rentabilidade_total:.1f}%")
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+    with tab3:
+        st.subheader("🏠 Fundos Imobiliários - FIIs")
+        
+        st.info("""
+        **💡 Sobre Fundos Imobiliários:**
+        - Rendimentos mensais via dividendos
+        - Diversificação em diferentes tipos de imóveis
+        - Liquidez diária na bolsa
+        - Isenção de IR para pessoas físicas (até R$ 20k/mês)
+        """)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 🏢 Parâmetros do Investimento")
+            valor_cota = st.number_input("Valor da Cota (R$):", value=98.75, step=1.0, key="vc1")
+            cotas_adquiridas = st.number_input("Quantidade de Cotas:", value=300, step=10, key="qc1")
+            dy_mensal = st.slider("Dividend Yield Mensal (%):", 0.1, 2.0, 0.65, 0.05, key="dym1")
+            valorizacao_anual_fii = st.slider("Valorização Anual da Cota (%):", -5.0, 20.0, 8.5, 0.5, key="vaf1")
+            tempo_investimento_fii = st.slider("Tempo de Investimento (anos):", 1, 30, 7, key="tif1")
+        
+        with col2:
+            st.markdown("### 💰 Projeção de Resultados")
+            
+            # Cálculos FII
+            investimento_inicial_fii = valor_cota * cotas_adquiridas
+            valor_final_cotas = investimento_inicial_fii * (1 + valorizacao_anual_fii/100) ** tempo_investimento_fii
+            
+            # Dividendos mensais
+            dividendos_mensais = investimento_inicial_fii * (dy_mensal/100)
+            total_meses = tempo_investimento_fii * 12
