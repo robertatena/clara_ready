@@ -1,20 +1,17 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import json
-import time
-import base64
-from typing import Dict, List, Tuple, Optional
-import io
 import requests
+import json
+from datetime import datetime
+import base64
+import io
+import re
+from typing import List, Dict, Tuple
 
 # Configuração da página
 st.set_page_config(
-    page_title="Clara Ready - Plataforma de Gestão Financeira",
-    page_icon="💜",
+    page_title="Clara Ready - Seu Assistente Jurídico Inteligente",
+    page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -23,33 +20,20 @@ st.set_page_config(
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2.5rem;
-        color: #6a0dad;
+        font-size: 2.8rem;
+        color: #7B1FA2;
         text-align: center;
-        margin-bottom: 2rem;
-        font-weight: bold;
+        margin-bottom: 1rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #7B1FA2, #E91E63);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
     }
     .sub-header {
-        font-size: 1.5rem;
-        color: #8a2be2;
-        margin-bottom: 1rem;
-        font-weight: 600;
-    }
-    .metric-card {
-        background-color: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border-left: 4px solid #6a0dad;
-        margin-bottom: 1rem;
-    }
-    .success-metric {
-        border-left: 4px solid #28a745;
-    }
-    .warning-metric {
-        border-left: 4px solid #ffc107;
-    }
-    .danger-metric {
-        border-left: 4px solid #dc3545;
+        font-size: 1.8rem;
+        color: #7B1FA2;
+        margin-bottom: 1.5rem;
+        font-weight: 700;
     }
     .feature-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -58,678 +42,579 @@ st.markdown("""
         border-radius: 15px;
         margin: 1rem 0;
         text-align: center;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    .alert-box {
+        background-color: #FFF3CD;
+        border: 1px solid #FFEAA7;
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    .success-box {
+        background-color: #D1ECF1;
+        border: 1px solid #BEE5EB;
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    .contract-section {
+        background-color: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border-left: 4px solid #7B1FA2;
+        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-class FinancialManager:
+class ContractAnalyzer:
     def __init__(self):
-        self.transactions = []
-        self.categories = [
-            "Alimentação", "Transporte", "Moradia", "Saúde", 
-            "Educação", "Lazer", "Vestuário", "Outros"
+        self.clausulas_problematicas = {
+            'juros_abusivos': {
+                'patterns': [
+                    r'juros.*(\d{2,})%',
+                    r'taxa.*(\d{2,})%',
+                    r'multa.*(\d{2,})%'
+                ],
+                'risco': 'Alto',
+                'recomendacao': 'Juros acima de 1% ao mês podem ser considerados abusivos. Sugerimos negociar redução.'
+            },
+            'clausula_penal_excessiva': {
+                'patterns': [
+                    r'multa.*(\d{2,})%',
+                    r'penalidade.*(\d{2,})%'
+                ],
+                'risco': 'Médio',
+                'recomendacao': 'Multas superiores a 2% podem ser revisadas judicialmente.'
+            },
+            'alteracao_unilateral': {
+                'patterns': [
+                    r'unilateralmente',
+                    r'a critério.*empresa',
+                    r'reserva.*direito.*alterar'
+                ],
+                'risco': 'Alto',
+                'recomendacao': 'Cláusulas que permitem alteração unilateral são abusivas.'
+            },
+            'renuncia_direitos': {
+                'patterns': [
+                    r'renúncia.*direito',
+                    r'concorda.*não.*processar',
+                    r'abre.*mão.*direitos'
+                ],
+                'risco': 'Alto',
+                'recomendacao': 'Não é permitida renúncia antecipada de direitos.'
+            }
+        }
+        
+        self.leis_referencia = [
+            "Código de Defesa do Consumidor (Lei 8.078/90)",
+            "Código Civil Brasileiro (Lei 10.406/02)",
+            "Lei do Superendividamento (Lei 14.181/21)",
+            "Lei de Liberdade Econômica (Lei 13.874/19)"
         ]
-        self.initialize_data()
-    
-    def initialize_data(self):
-        if 'transactions' not in st.session_state:
-            st.session_state.transactions = []
-        if 'goals' not in st.session_state:
-            st.session_state.goals = []
-        if 'budgets' not in st.session_state:
-            st.session_state.budgets = {category: 0 for category in self.categories}
-    
-    def add_transaction(self, amount: float, category: str, description: str, date: datetime, type: str = "expense"):
-        transaction = {
-            'id': len(st.session_state.transactions) + 1,
-            'amount': amount,
-            'category': category,
-            'description': description,
-            'date': date,
-            'type': type  # 'income' or 'expense'
+
+    def analisar_contrato(self, texto: str) -> Dict:
+        """Analisa o texto do contrato em busca de cláusulas problemáticas"""
+        resultados = {
+            'clausulas_problematicas': [],
+            'pontos_atenção': [],
+            'score_risco': 0,
+            'recomendacoes': [],
+            'leis_aplicaveis': self.leis_referencia
         }
-        st.session_state.transactions.append(transaction)
-        return transaction
-    
-    def add_goal(self, name: str, target_amount: float, current_amount: float, deadline: datetime):
-        goal = {
-            'id': len(st.session_state.goals) + 1,
-            'name': name,
-            'target_amount': target_amount,
-            'current_amount': current_amount,
-            'deadline': deadline,
-            'created_at': datetime.now()
-        }
-        st.session_state.goals.append(goal)
-        return goal
-    
-    def get_financial_summary(self) -> Dict:
-        total_income = sum(t['amount'] for t in st.session_state.transactions if t['type'] == 'income')
-        total_expenses = sum(t['amount'] for t in st.session_state.transactions if t['type'] == 'expense')
-        balance = total_income - total_expenses
         
-        expenses_by_category = {}
-        for category in self.categories:
-            category_expenses = sum(t['amount'] for t in st.session_state.transactions 
-                                  if t['type'] == 'expense' and t['category'] == category)
-            expenses_by_category[category] = category_expenses
+        texto_lower = texto.lower()
         
-        return {
-            'total_income': total_income,
-            'total_expenses': total_expenses,
-            'balance': balance,
-            'expenses_by_category': expenses_by_category
+        for clausula, info in self.clausulas_problematicas.items():
+            for pattern in info['patterns']:
+                if re.search(pattern, texto_lower):
+                    resultados['clausulas_problematicas'].append({
+                        'tipo': clausula,
+                        'risco': info['risco'],
+                        'recomendacao': info['recomendacao']
+                    })
+                    resultados['score_risco'] += 1
+        
+        # Análise de pontos de atenção adicionais
+        if len(texto.split()) < 500:
+            resultados['pontos_atenção'].append("Contrato muito curto - pode estar incompleto")
+        
+        if 'confidencialidade' not in texto_lower:
+            resultados['pontos_atenção'].append("Ausência de cláusula de confidencialidade")
+        
+        if 'rescisão' not in texto_lower:
+            resultados['pontos_atenção'].append("Cláusula de rescisão não identificada")
+        
+        # Recomendações gerais
+        if resultados['score_risco'] > 2:
+            resultados['recomendacoes'].append("⚠️ Contrato apresenta alto risco. Recomendamos consulta com advogado.")
+        elif resultados['score_risco'] > 0:
+            resultados['recomendacoes'].append("🔍 Contrato apresenta pontos de atenção que devem ser revisados.")
+        else:
+            resultados['recomendacoes'].append("✅ Contrato aparenta estar dentro dos parâmetros legais.")
+        
+        return resultados
+
+class LegalAssistant:
+    def __init__(self):
+        self.servicos_disponiveis = [
+            "Análise de Contratos",
+            "Recursos de Multas de Trânsito",
+            "Cancelamento de Assinaturas",
+            "Ação Renovatória",
+            "Direito do Consumidor",
+            "Direito Trabalhista"
+        ]
+        
+        self.modelos_documentos = {
+            "multa_transito": "Recurso para Multa de Trânsito",
+            "cancelamento_assinatura": "Carta de Cancelamento",
+            "notificacao_extrajudicial": "Notificação Extrajudicial",
+            "reclamacao_consumidor": "Reclamação no PROCON"
         }
 
-# Inicializar gerenciador financeiro
-financial_manager = FinancialManager()
+    def gerar_documento(self, tipo: str, dados: Dict) -> str:
+        """Gera documentos legais personalizados"""
+        modelos = {
+            "multa_transito": f"""
+EXMO. SR. DR. JUIZ DE DIREITO DA {dados.get('vara', 'XXª VARA CÍVEL')}
+Processo: {dados.get('processo', 'Nº 0000000-00.0000.0.00.0000')}
+
+RECURSO DE MULTA DE TRÂNSITO
+
+{dados.get('nome', 'NOME DO RECORRENTE')}, brasileiro, portador do CPF {dados.get('cpf', '000.000.000-00')}, 
+vem respeitosamente à presença de Vossa Excelência, através deste recurso, impugnar a multa de trânsito 
+aplicada conforme auto de infração nº {dados.get('numero_auto', '000000000')}, pelos seguintes fundamentos:
+
+1. {dados.get('fundamento1', 'Fundamento jurídico aqui')}
+2. {dados.get('fundamento2', 'Segundo fundamento jurídico')}
+
+Diante do exposto, requer:
+- O provimento do presente recurso
+- O cancelamento da multa aplicada
+- A juntada de documentos em anexo
+
+Local e data: {dados.get('cidade', 'Cidade')}, {datetime.now().strftime('%d/%m/%Y')}
+
+Atenciosamente,
+{dados.get('nome', 'Nome do Recorrente')}
+            """,
+            "cancelamento_assinatura": f"""
+À {dados.get('empresa', 'NOME DA EMPRESA')}
+CNPJ: {dados.get('cnpj', '00.000.000/0000-00')}
+
+CARTA DE CANCELAMENTO
+
+Eu, {dados.get('nome', 'NOME DO CLIENTE')}, portador do CPF {dados.get('cpf', '000.000.000-00')}, 
+venho por meio desta comunicar o cancelamento da assinatura/service {dados.get('servico', 'nome do serviço')}, 
+contratado em {dados.get('data_contratacao', '00/00/0000')}.
+
+Fundamento legal: Artigo 49 do Código de Defesa do Consumidor.
+
+Solicito:
+1. Cancelamento imediato do serviço
+2. Encerramento de cobranças futuras
+3. Confirmação por escrito do cancelamento
+
+Atenciosamente,
+{dados.get('nome', 'Nome do Cliente')}
+Telefone: {dados.get('telefone', '(00) 00000-0000')}
+Email: {dados.get('email', 'email@exemplo.com')}
+            """
+        }
+        
+        return modelos.get(tipo, "Modelo não encontrado.")
+
+# Inicializar classes
+analisador = ContractAnalyzer()
+assistente = LegalAssistant()
 
 def main():
-    st.markdown('<div class="main-header">💜 Clara Ready - Plataforma de Gestão Financeira Inteligente</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">⚖️ Clara Ready - Seu Assistente Jurídico Brasileiro</div>', unsafe_allow_html=True)
     
-    # Menu lateral
-    st.sidebar.title("Navegação")
-    menu_options = [
-        "📊 Dashboard Principal",
-        "💸 Gestão de Transações",
-        "🎯 Metas Financeiras",
-        "📈 Orçamentos",
-        "📋 Relatórios",
-        "🔔 Alertas",
-        "⚙️ Configurações"
-    ]
-    selected_menu = st.sidebar.selectbox("Selecione uma opção:", menu_options)
+    st.markdown("""
+    <div style='text-align: center; color: #666; margin-bottom: 2rem;'>
+        A primeira plataforma brasileira de defesa do consumidor e assistência jurídica automatizada
+    </div>
+    """, unsafe_allow_html=True)
     
-    # Filtros globais
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Filtros")
+    # Menu de navegação
+    menu = st.sidebar.selectbox(
+        "Navegação",
+        ["🏠 Início", "📄 Análise de Contratos", "🚗 Recursos de Trânsito", "📝 Modelos de Documentos", "ℹ️ Direitos do Consumidor"]
+    )
     
-    # Filtro de período
-    period_options = ["Últimos 7 dias", "Últimos 30 dias", "Últimos 90 dias", "Este mês", "Personalizado"]
-    selected_period = st.sidebar.selectbox("Período:", period_options)
-    
-    if selected_period == "Personalizado":
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            start_date = st.date_input("Data inicial")
-        with col2:
-            end_date = st.date_input("Data final")
-    
-    # Dashboard Principal
-    if selected_menu == "📊 Dashboard Principal":
-        show_dashboard()
-    
-    # Gestão de Transações
-    elif selected_menu == "💸 Gestão de Transações":
-        show_transaction_management()
-    
-    # Metas Financeiras
-    elif selected_menu == "🎯 Metas Financeiras":
-        show_financial_goals()
-    
-    # Orçamentos
-    elif selected_menu == "📈 Orçamentos":
-        show_budget_management()
-    
-    # Relatórios
-    elif selected_menu == "📋 Relatórios":
-        show_reports()
-    
-    # Alertas
-    elif selected_menu == "🔔 Alertas":
-        show_alerts()
-    
-    # Configurações
-    elif selected_menu == "⚙️ Configurações":
-        show_settings()
+    if menu == "🏠 Início":
+        show_home()
+    elif menu == "📄 Análise de Contratos":
+        show_contract_analysis()
+    elif menu == "🚗 Recursos de Trânsito":
+        show_traffic_appeals()
+    elif menu == "📝 Modelos de Documentos":
+        show_document_templates()
+    elif menu == "ℹ️ Direitos do Consumidor":
+        show_consumer_rights()
 
-def show_dashboard():
-    st.markdown('<div class="sub-header">📊 Dashboard Financeiro</div>', unsafe_allow_html=True)
+def show_home():
+    st.markdown('<div class="sub-header">🎯 Como a Clara Ready Pode Te Ajudar Hoje?</div>', unsafe_allow_html=True)
     
-    summary = financial_manager.get_financial_summary()
-    
-    # Métricas principais
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown(f"""
-        <div class="metric-card success-metric">
-            <h3>💰 Receitas</h3>
-            <h2>R$ {summary['total_income']:,.2f}</h2>
+        st.markdown("""
+        <div class="feature-card">
+            <h3>📄 Análise de Contratos</h3>
+            <p>Revise contratos e identifique cláusulas abusivas automaticamente</p>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
-        st.markdown(f"""
-        <div class="metric-card danger-metric">
-            <h3>💸 Despesas</h3>
-            <h2>R$ {summary['total_expenses']:,.2f}</h2>
+        st.markdown("""
+        <div class="feature-card">
+            <h3>🚗 Recursos de Multas</h3>
+            <p>Recorra multas de trânsito com modelos personalizados</p>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
-        balance_class = "success-metric" if summary['balance'] >= 0 else "danger-metric"
-        st.markdown(f"""
-        <div class="metric-card {balance_class}">
-            <h3>⚖️ Saldo</h3>
-            <h2>R$ {summary['balance']:,.2f}</h2>
+        st.markdown("""
+        <div class="feature-card">
+            <h3>📝 Documentos Jurídicos</h3>
+            <p>Gere cartas, recursos e notificações automaticamente</p>
         </div>
         """, unsafe_allow_html=True)
     
-    with col4:
-        savings_rate = (summary['balance'] / summary['total_income'] * 100) if summary['total_income'] > 0 else 0
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>📈 Taxa de Poupança</h3>
-            <h2>{savings_rate:.1f}%</h2>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("---")
     
-    # Gráficos
+    # Casos de sucesso
+    st.markdown("### 🏆 Casos Resolvidos com Sucesso")
+    
     col1, col2 = st.columns(2)
     
     with col1:
-        # Gráfico de despesas por categoria
-        if summary['expenses_by_category']:
-            categories = list(summary['expenses_by_category'].keys())
-            values = list(summary['expenses_by_category'].values())
-            
-            fig = px.pie(
-                names=categories,
-                values=values,
-                title="Distribuição de Despesas por Categoria",
-                color_discrete_sequence=px.colors.sequential.Plasma
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        st.markdown("""
+        <div class="success-box">
+            <h4>💰 R$ 15.760 em multas canceladas</h4>
+            <p>João Silva usou nossos recursos e cancelou 8 multas de trânsito</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div class="success-box">
+            <h4>📄 Contrato revisado em 5 minutos</h4>
+            <p>Maria Santos identificou 3 cláusulas abusivas no seu financiamento</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        # Gráfico de evolução mensal (exemplo)
-        months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun']
-        income_data = [5000, 5200, 4800, 5500, 6000, 5800]
-        expense_data = [4500, 4700, 4200, 5000, 5200, 5100]
+        st.markdown("""
+        <div class="success-box">
+            <h4>🔔 Assinatura cancelada</h4>
+            <p>Carlos Oliveira cancelou serviço com base no artigo 49 do CDC</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=months, y=income_data, name='Receitas', line=dict(color='#28a745')))
-        fig.add_trace(go.Scatter(x=months, y=expense_data, name='Despesas', line=dict(color='#dc3545')))
-        fig.update_layout(title="Evolução Mensal - Receitas vs Despesas")
-        st.plotly_chart(fig, use_container_width=True)
-    
-    # Transações recentes
-    st.markdown("### 🔄 Transações Recentes")
-    if st.session_state.transactions:
-        recent_transactions = sorted(st.session_state.transactions, key=lambda x: x['date'], reverse=True)[:5]
-        
-        for transaction in recent_transactions:
-            transaction_type = "✅ Receita" if transaction['type'] == 'income' else "❌ Despesa"
-            color = "green" if transaction['type'] == 'income' else "red"
-            
-            st.markdown(f"""
-            <div style="border-left: 4px solid {color}; padding: 10px; margin: 5px 0; background-color: #f8f9fa;">
-                <strong>{transaction_type}</strong> - {transaction['description']}<br>
-                <small>Categoria: {transaction['category']} | Valor: R$ {transaction['amount']:,.2f}</small>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("Nenhuma transação cadastrada ainda.")
+        st.markdown("""
+        <div class="success-box">
+            <h4>⚖️ Direitos garantidos</h4>
+            <p>Ana Costa recebeu indenização por cobrança indevida</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-def show_transaction_management():
-    st.markdown('<div class="sub-header">💸 Gestão de Transações</div>', unsafe_allow_html=True)
+def show_contract_analysis():
+    st.markdown('<div class="sub-header">📄 Análise Inteligente de Contratos</div>', unsafe_allow_html=True)
     
-    tab1, tab2, tab3 = st.tabs(["➕ Nova Transação", "📋 Listar Transações", "🔍 Buscar Transações"])
+    st.markdown("""
+    <div class="alert-box">
+        <strong>⚠️ Atenção:</strong> Esta análise não substitui consulta com advogado. 
+        É uma ferramenta de triagem para identificar possíveis problemas.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs(["📤 Upload do Contrato", "📝 Colar Texto", "📊 Análise Rápida"])
     
     with tab1:
-        col1, col2 = st.columns(2)
+        uploaded_file = st.file_uploader("Faça upload do contrato (PDF, DOCX ou TXT)", 
+                                       type=['pdf', 'docx', 'txt'])
         
-        with col1:
-            transaction_type = st.radio("Tipo de Transação:", ["Receita", "Despesa"])
-            amount = st.number_input("Valor (R$):", min_value=0.0, step=0.01, format="%.2f")
-            category = st.selectbox("Categoria:", financial_manager.categories)
-        
-        with col2:
-            description = st.text_input("Descrição:")
-            transaction_date = st.date_input("Data:", datetime.now())
-        
-        if st.button("💾 Salvar Transação", type="primary"):
-            if amount > 0 and description:
-                type_str = "income" if transaction_type == "Receita" else "expense"
-                financial_manager.add_transaction(
-                    amount=amount,
-                    category=category,
-                    description=description,
-                    date=transaction_date,
-                    type=type_str
-                )
-                st.success("✅ Transação salva com sucesso!")
-                st.rerun()
-            else:
-                st.error("❌ Preencha todos os campos obrigatórios.")
+        if uploaded_file is not None:
+            # Simulação de processamento de arquivo
+            st.success(f"✅ Arquivo {uploaded_file.name} carregado com sucesso!")
+            
+            if st.button("🔍 Analisar Contrato", type="primary"):
+                with st.spinner("Analisando contrato..."):
+                    # Simulação de análise
+                    texto_exemplo = """
+                    CONTRATO DE PRESTAÇÃO DE SERVIÇOS
+                    
+                    Cláusula 1 - OBJETO: Contratação de serviços mediante pagamento mensal.
+                    Cláusula 2 - PRAZO: Vigência de 12 meses com renovação automática.
+                    Cláusula 3 - MULTA: Em caso de rescisão, multa de 50% do valor total.
+                    Cláusula 4 - JUROS: Juros de 5% ao mês em caso de atraso.
+                    Cláusula 5 - ALTERAÇÕES: A empresa pode alterar unilateralmente os termos.
+                    """
+                    
+                    resultados = analisador.analisar_contrato(texto_exemplo)
+                    mostrar_resultados_analise(resultados)
     
     with tab2:
-        if st.session_state.transactions:
-            # Filtros
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                filter_type = st.selectbox("Filtrar por tipo:", ["Todos", "Receita", "Despesa"])
-            with col2:
-                filter_category = st.selectbox("Filtrar por categoria:", ["Todas"] + financial_manager.categories)
-            with col3:
-                start_date_filter = st.date_input("Data inicial:", datetime.now() - timedelta(days=30))
-            
-            # Aplicar filtros
-            filtered_transactions = st.session_state.transactions.copy()
-            
-            if filter_type != "Todos":
-                type_filter = "income" if filter_type == "Receita" else "expense"
-                filtered_transactions = [t for t in filtered_transactions if t['type'] == type_filter]
-            
-            if filter_category != "Todas":
-                filtered_transactions = [t for t in filtered_transactions if t['category'] == filter_category]
-            
-            filtered_transactions = [t for t in filtered_transactions if t['date'] >= start_date_filter]
-            
-            # Tabela de transações
-            st.markdown("### 📋 Transações Filtradas")
-            for transaction in filtered_transactions:
-                with st.expander(f"{transaction['date'].strftime('%d/%m/%Y')} - {transaction['description']} - R$ {transaction['amount']:,.2f}"):
-                    col1, col2, col3 = st.columns([3, 2, 1])
-                    with col1:
-                        st.write(f"**Descrição:** {transaction['description']}")
-                        st.write(f"**Categoria:** {transaction['category']}")
-                    with col2:
-                        st.write(f"**Valor:** R$ {transaction['amount']:,.2f}")
-                        st.write(f"**Tipo:** {'✅ Receita' if transaction['type'] == 'income' else '❌ Despesa'}")
-                    with col3:
-                        if st.button("🗑️", key=f"delete_{transaction['id']}"):
-                            st.session_state.transactions = [t for t in st.session_state.transactions if t['id'] != transaction['id']]
-                            st.success("Transação excluída!")
-                            st.rerun()
-        else:
-            st.info("Nenhuma transação cadastrada ainda.")
+        texto_contrato = st.text_area("Cole o texto do contrato aqui:", height=300,
+                                    placeholder="Cole o texto completo do contrato para análise...")
+        
+        if st.button("🔍 Analisar Texto", type="primary", key="analyze_text"):
+            if texto_contrato:
+                with st.spinner("Analisando texto do contrato..."):
+                    resultados = analisador.analisar_contrato(texto_contrato)
+                    mostrar_resultados_analise(resultados)
+            else:
+                st.warning("Por favor, cole o texto do contrato para análise.")
     
     with tab3:
-        st.markdown("### 🔍 Busca Avançada")
-        search_term = st.text_input("Termo de busca:")
+        st.markdown("### 📊 Análise Rápida por Tipo de Contrato")
         
-        if search_term:
-            results = [t for t in st.session_state.transactions 
-                      if search_term.lower() in t['description'].lower()]
-            
-            if results:
-                st.success(f"🔍 {len(results)} transação(ões) encontrada(s)")
-                for transaction in results:
-                    st.write(f"**{transaction['date'].strftime('%d/%m/%Y')}** - {transaction['description']} - R$ {transaction['amount']:,.2f}")
-            else:
-                st.warning("Nenhuma transação encontrada com o termo buscado.")
-
-def show_financial_goals():
-    st.markdown('<div class="sub-header">🎯 Metas Financeiras</div>', unsafe_allow_html=True)
-    
-    tab1, tab2 = st.tabs(["🎯 Nova Meta", "📊 Minhas Metas"])
-    
-    with tab1:
-        st.markdown("### 🎯 Criar Nova Meta Financeira")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            goal_name = st.text_input("Nome da Meta:")
-            target_amount = st.number_input("Valor Alvo (R$):", min_value=0.0, step=0.01, format="%.2f")
-        
-        with col2:
-            current_amount = st.number_input("Valor Atual (R$):", min_value=0.0, step=0.01, format="%.2f")
-            deadline = st.date_input("Data Limite:", min_value=datetime.now().date())
-        
-        if st.button("🎯 Criar Meta", type="primary"):
-            if goal_name and target_amount > 0:
-                financial_manager.add_goal(
-                    name=goal_name,
-                    target_amount=target_amount,
-                    current_amount=current_amount,
-                    deadline=deadline
-                )
-                st.success("✅ Meta criada com sucesso!")
-                st.rerun()
-            else:
-                st.error("❌ Preencha todos os campos obrigatórios.")
-    
-    with tab2:
-        if st.session_state.goals:
-            st.markdown("### 📊 Progresso das Metas")
-            
-            for goal in st.session_state.goals:
-                progress = (goal['current_amount'] / goal['target_amount']) * 100
-                days_remaining = (goal['deadline'] - datetime.now().date()).days
-                
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    st.write(f"**{goal['name']}**")
-                    st.progress(progress / 100)
-                    st.write(f"R$ {goal['current_amount']:,.2f} de R$ {goal['target_amount']:,.2f} ({progress:.1f}%)")
-                    st.write(f"⏰ {days_remaining} dias restantes")
-                
-                with col2:
-                    # Atualizar progresso
-                    new_amount = st.number_input(
-                        "Atualizar valor:",
-                        min_value=0.0,
-                        value=float(goal['current_amount']),
-                        step=0.01,
-                        format="%.2f",
-                        key=f"update_{goal['id']}"
-                    )
-                    if st.button("💾 Atualizar", key=f"save_{goal['id']}"):
-                        goal['current_amount'] = new_amount
-                        st.success("Progresso atualizado!")
-                        st.rerun()
-                    
-                    if st.button("🗑️ Excluir", key=f"delete_goal_{goal['id']}"):
-                        st.session_state.goals = [g for g in st.session_state.goals if g['id'] != goal['id']]
-                        st.success("Meta excluída!")
-                        st.rerun()
-                
-                st.markdown("---")
-        else:
-            st.info("🎯 Nenhuma meta financeira cadastrada ainda.")
-
-def show_budget_management():
-    st.markdown('<div class="sub-header">📈 Gestão de Orçamentos</div>', unsafe_allow_html=True)
-    
-    st.markdown("### 💰 Definir Orçamentos por Categoria")
-    
-    summary = financial_manager.get_financial_summary()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("#### 📋 Orçamentos Mensais")
-        for category in financial_manager.categories:
-            current_budget = st.session_state.budgets.get(category, 0)
-            spent = summary['expenses_by_category'].get(category, 0)
-            
-            new_budget = st.number_input(
-                f"{category}:",
-                min_value=0.0,
-                value=float(current_budget),
-                step=10.0,
-                format="%.2f",
-                key=f"budget_{category}"
-            )
-            
-            # Atualizar orçamento
-            st.session_state.budgets[category] = new_budget
-            
-            # Mostrar progresso
-            if new_budget > 0:
-                progress = min((spent / new_budget) * 100, 100)
-                color = "green" if progress < 80 else "orange" if progress < 100 else "red"
-                
-                st.markdown(f"""
-                <div style="margin-bottom: 15px;">
-                    <small>Gasto: R$ {spent:,.2f} / R$ {new_budget:,.2f}</small>
-                    <div style="background-color: #e0e0e0; border-radius: 5px; height: 10px;">
-                        <div style="background-color: {color}; width: {progress}%; height: 10px; border-radius: 5px;"></div>
-                    </div>
-                    <small>{progress:.1f}% utilizado</small>
-                </div>
-                """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("#### 📊 Resumo dos Orçamentos")
-        
-        total_budget = sum(st.session_state.budgets.values())
-        total_spent = sum(summary['expenses_by_category'].values())
-        
-        if total_budget > 0:
-            overall_progress = (total_spent / total_budget) * 100
-            
-            st.metric("Orçamento Total", f"R$ {total_budget:,.2f}")
-            st.metric("Total Gasto", f"R$ {total_spent:,.2f}")
-            st.metric("Saldo Disponível", f"R$ {total_budget - total_spent:,.2f}")
-            
-            st.markdown(f"""
-            <div style="text-align: center; margin-top: 20px;">
-                <h4>Utilização Geral: {overall_progress:.1f}%</h4>
-                <div style="background-color: #e0e0e0; border-radius: 10px; height: 20px;">
-                    <div style="background-color: {'green' if overall_progress < 80 else 'orange' if overall_progress < 100 else 'red'}; 
-                                width: {min(overall_progress, 100)}%; height: 20px; border-radius: 10px;"></div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-def show_reports():
-    st.markdown('<div class="sub-header">📋 Relatórios Financeiros</div>', unsafe_allow_html=True)
-    
-    tab1, tab2, tab3 = st.tabs(["📈 Relatório Mensal", "📊 Análise por Categoria", "💾 Exportar Dados"])
-    
-    with tab1:
-        st.markdown("### 📈 Relatório Mensal")
-        
-        # Gráfico de receitas vs despesas
-        months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun']
-        income_data = [5000, 5200, 4800, 5500, 6000, 5800]
-        expense_data = [4500, 4700, 4200, 5000, 5200, 5100]
-        savings_data = [i - e for i, e in zip(income_data, expense_data)]
-        
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=months, y=income_data, name='Receitas', marker_color='#28a745'))
-        fig.add_trace(go.Bar(x=months, y=expense_data, name='Despesas', marker_color='#dc3545'))
-        fig.add_trace(go.Scatter(x=months, y=savings_data, name='Poupança', line=dict(color='#6a0dad', width=4)))
-        
-        fig.update_layout(
-            title="Evolução Mensal - Receitas, Despesas e Poupança",
-            barmode='group'
+        tipo_contrato = st.selectbox(
+            "Selecione o tipo de contrato:",
+            ["Empréstimo/FINAME", "Aluguel", "Trabalho", "Prestação de Serviços", "Consórcio"]
         )
-        st.plotly_chart(fig, use_container_width=True)
-    
-    with tab2:
-        st.markdown("### 📊 Análise Detalhada por Categoria")
         
-        summary = financial_manager.get_financial_summary()
-        
-        if summary['expenses_by_category']:
-            # Gráfico de barras horizontal
-            categories = list(summary['expenses_by_category'].keys())
-            values = list(summary['expenses_by_category'].values())
+        if st.button("🎯 Análise Específica", type="primary"):
+            st.info(f"Análise específica para contrato de {tipo_contrato}")
             
-            fig = px.bar(
-                x=values,
-                y=categories,
-                orientation='h',
-                title="Despesas por Categoria",
-                color=values,
-                color_continuous_scale='Viridis'
-            )
-            fig.update_layout(yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig, use_container_width=True)
+            # Dicas específicas por tipo de contrato
+            dicas = {
+                "Empréstimo/FINAME": [
+                    "Verifique os juros - não podem ser superiores a 1% ao mês + taxa de risco",
+                    "Confira se há seguros embutidos no valor",
+                    "Atenção a multas por antecipação"
+                ],
+                "Aluguel": [
+                    "Reajuste máximo pelo IGP-M ou índice contratado",
+                    "Verifique cláusulas de fiador e caução",
+                    "Multa de 1/3 do aluguel em caso de quebra"
+                ]
+            }
             
-            # Tabela detalhada
-            st.markdown("### 📋 Tabela de Despesas")
-            expense_data = []
-            for category, amount in summary['expenses_by_category'].items():
-                if amount > 0:
-                    budget = st.session_state.budgets.get(category, 0)
-                    percentage = (amount / budget * 100) if budget > 0 else 0
-                    expense_data.append({
-                        'Categoria': category,
-                        'Valor Gasto': amount,
-                        'Orçamento': budget,
-                        'Utilização (%)': percentage
-                    })
-            
-            if expense_data:
-                df = pd.DataFrame(expense_data)
-                st.dataframe(df.style.format({
-                    'Valor Gasto': 'R$ {:.2f}',
-                    'Orçamento': 'R$ {:.2f}',
-                    'Utilização (%)': '{:.1f}%'
-                }))
-    
-    with tab3:
-        st.markdown("### 💾 Exportar Dados")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("📥 Exportar Transações para CSV"):
-                if st.session_state.transactions:
-                    df = pd.DataFrame(st.session_state.transactions)
-                    csv = df.to_csv(index=False)
-                    
-                    st.download_button(
-                        label="⬇️ Baixar CSV",
-                        data=csv,
-                        file_name=f"transacoes_{datetime.now().strftime('%Y%m%d')}.csv",
-                        mime="text/csv"
-                    )
-                else:
-                    st.warning("Nenhuma transação para exportar.")
-        
-        with col2:
-            if st.button("📊 Exportar Relatório PDF"):
-                st.info("Funcionalidade de exportação PDF em desenvolvimento")
+            for dica in dicas.get(tipo_contrato, ["Analise todas as cláusulas cuidadosamente"]):
+                st.markdown(f"• {dica}")
 
-def show_alerts():
-    st.markdown('<div class="sub-header">🔔 Alertas e Notificações</div>', unsafe_allow_html=True)
+def mostrar_resultados_analise(resultados):
+    st.markdown("---")
+    st.markdown("## 📋 Resultados da Análise")
     
-    # Alertas baseados nos dados atuais
-    summary = financial_manager.get_financial_summary()
-    alerts = []
+    # Score de risco
+    col1, col2, col3 = st.columns(3)
     
-    # Verificar orçamentos estourados
-    for category, budget in st.session_state.budgets.items():
-        spent = summary['expenses_by_category'].get(category, 0)
-        if budget > 0 and spent > budget:
-            alerts.append({
-                'type': 'warning',
-                'message': f"⚠️ Orçamento de {category} estourado! Gasto: R$ {spent:,.2f} | Orçamento: R$ {budget:,.2f}"
-            })
+    with col1:
+        risco_color = "red" if resultados['score_risco'] > 2 else "orange" if resultados['score_risco'] > 0 else "green"
+        st.metric("Nível de Risco", resultados['score_risco'], delta=None, delta_color="off")
     
-    # Verificar metas próximas do prazo
-    for goal in st.session_state.goals:
-        days_remaining = (goal['deadline'] - datetime.now().date()).days
-        progress = (goal['current_amount'] / goal['target_amount']) * 100
+    with col2:
+        st.metric("Cláusulas Problemáticas", len(resultados['clausulas_problematicas']))
+    
+    with col3:
+        st.metric("Pontos de Atenção", len(resultados['pontos_atenção']))
+    
+    # Cláusulas problemáticas
+    if resultados['clausulas_problematicas']:
+        st.markdown("### 🚨 Cláusulas Identificadas")
         
-        if days_remaining <= 7 and progress < 100:
-            alerts.append({
-                'type': 'info',
-                'message': f"🎯 Meta '{goal['name']}' vence em {days_remaining} dias! Progresso: {progress:.1f}%"
-            })
-    
-    # Verificar saldo negativo
-    if summary['balance'] < 0:
-        alerts.append({
-            'type': 'error',
-            'message': f"❌ Saldo negativo! Valor: R$ {abs(summary['balance']):,.2f}"
-        })
-    
-    # Mostrar alertas
-    if alerts:
-        st.markdown("### 🔔 Alertas Ativos")
-        for alert in alerts:
-            if alert['type'] == 'error':
-                st.error(alert['message'])
-            elif alert['type'] == 'warning':
-                st.warning(alert['message'])
-            else:
-                st.info(alert['message'])
+        for clausula in resultados['clausulas_problematicas']:
+            cor = "🔴" if clausula['risco'] == 'Alto' else "🟡"
+            st.markdown(f"""
+            <div class="contract-section">
+                <h4>{cor} {clausula['tipo'].replace('_', ' ').title()}</h4>
+                <p><strong>Risco:</strong> {clausula['risco']}</p>
+                <p><strong>Recomendação:</strong> {clausula['recomendacao']}</p>
+            </div>
+            """, unsafe_allow_html=True)
     else:
-        st.success("✅ Nenhum alerta ativo no momento!")
+        st.success("✅ Nenhuma cláusula problemática identificada!")
     
-    # Configurações de alerta
-    st.markdown("### ⚙️ Configurações de Alerta")
+    # Pontos de atenção
+    if resultados['pontos_atenção']:
+        st.markdown("### 🔍 Pontos de Atenção")
+        for ponto in resultados['pontos_atenção']:
+            st.warning(ponto)
+    
+    # Recomendações
+    st.markdown("### 💡 Recomendações")
+    for recomendacao in resultados['recomendacoes']:
+        st.info(recomendacao)
+    
+    # Leis aplicáveis
+    st.markdown("### ⚖️ Legislação Aplicável")
+    for lei in resultados['leis_aplicaveis']:
+        st.markdown(f"• {lei}")
+
+def show_traffic_appeals():
+    st.markdown('<div class="sub-header">🚗 Recursos de Multas de Trânsito</div>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="alert-box">
+        <strong>💡 Dica:</strong> Você pode recorrer de multas dentro de 30 dias. 
+        Nossa plataforma gera o recurso automaticamente!
+    </div>
+    """, unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.checkbox("Notificar quando orçamento estourar", value=True)
-        st.checkbox("Notificar sobre metas próximas do prazo", value=True)
-        st.checkbox("Alertas de saldo negativo", value=True)
+        st.markdown("### 📝 Dados da Multa")
+        
+        numero_auto = st.text_input("Número do Auto de Infração:")
+        data_infracao = st.date_input("Data da Infração:")
+        orgao_autuador = st.selectbox("Órgão Autuador:", ["DETRAN", "Polícia Rodoviária Federal", "Municipal"])
+        tipo_infracao = st.selectbox("Tipo de Infração:", [
+            "Excesso de Velocidade",
+            "Avançar Sinal Vermelho", 
+            "Estacionamento em Local Proibido",
+            "Uso do Celular ao Volante"
+        ])
     
     with col2:
-        st.checkbox("Relatório semanal automático", value=False)
-        st.checkbox("Notificações por email", value=False)
-        st.number_input("Dias para alerta de metas:", min_value=1, value=7)
-
-def show_settings():
-    st.markdown('<div class="sub-header">⚙️ Configurações do Sistema</div>', unsafe_allow_html=True)
+        st.markdown("### 👤 Seus Dados")
+        
+        nome_condutor = st.text_input("Nome do Condutor:")
+        cpf = st.text_input("CPF:")
+        habilitacao = st.text_input("Nº da CNH:")
+        endereco = st.text_input("Endereço:")
     
-    tab1, tab2, tab3 = st.tabs(["👤 Perfil", "🔧 Preferências", "🛠️ Sistema"])
+    fundamentos = st.text_area("Fundamentos do Recurso (opcional):",
+                             placeholder="Descreva brevemente por que você está recorrendo...")
+    
+    if st.button("🔄 Gerar Recurso Automático", type="primary"):
+        if numero_auto and nome_condutor:
+            dados = {
+                'nome': nome_condutor,
+                'cpf': cpf,
+                'numero_auto': numero_auto,
+                'vara': 'XXª VARA CÍVEL',
+                'cidade': 'Sua Cidade',
+                'fundamento1': 'Ausência de sinalização adequada' if not fundamentos else fundamentos,
+                'fundamento2': 'Erro na aferição do equipamento'
+            }
+            
+            documento = assistente.gerar_documento("multa_transito", dados)
+            
+            st.markdown("### 📄 Recurso Gerado com Sucesso!")
+            st.text_area("Seu recurso:", documento, height=400)
+            
+            # Botão para download
+            st.download_button(
+                label="📥 Baixar Recurso em PDF",
+                data=documento,
+                file_name=f"recurso_multas_{numero_auto}.txt",
+                mime="text/plain"
+            )
+        else:
+            st.error("Por favor, preencha pelo menos o número do auto e seu nome.")
+
+def show_document_templates():
+    st.markdown('<div class="sub-header">📝 Modelos de Documentos Jurídicos</div>', unsafe_allow_html=True)
+    
+    tipo_documento = st.selectbox(
+        "Selecione o tipo de documento:",
+        ["Carta de Cancelamento", "Notificação Extrajudicial", "Reclamação no PROCON", "Recurso Administrativo"]
+    )
+    
+    if tipo_documento == "Carta de Cancelamento":
+        st.markdown("### 📝 Carta de Cancelamento (Artigo 49 CDC)")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            nome_cliente = st.text_input("Seu Nome Completo:")
+            cpf_cliente = st.text_input("Seu CPF:")
+            nome_empresa = st.text_input("Nome da Empresa:")
+        
+        with col2:
+            cnpj_empresa = st.text_input("CNPJ da Empresa (opcional):")
+            servico = st.text_input("Serviço a Cancelar:")
+            data_contratacao = st.date_input("Data da Contratação:")
+        
+        if st.button("📄 Gerar Carta de Cancelamento", type="primary"):
+            if nome_cliente and nome_empresa:
+                dados = {
+                    'nome': nome_cliente,
+                    'cpf': cpf_cliente,
+                    'empresa': nome_empresa,
+                    'cnpj': cnpj_empresa,
+                    'servico': servico,
+                    'data_contratacao': data_contratacao.strftime('%d/%m/%Y'),
+                    'telefone': '(00) 00000-0000',
+                    'email': 'seuemail@exemplo.com'
+                }
+                
+                documento = assistente.gerar_documento("cancelamento_assinatura", dados)
+                
+                st.markdown("### ✅ Carta Gerada com Sucesso!")
+                st.text_area("Sua carta de cancelamento:", documento, height=300)
+                
+                st.download_button(
+                    label="📥 Baixar Carta",
+                    data=documento,
+                    file_name=f"carta_cancelamento_{nome_empresa}.txt",
+                    mime="text/plain"
+                )
+
+def show_consumer_rights():
+    st.markdown('<div class="sub-header">ℹ️ Seus Direitos como Consumidor</div>', unsafe_allow_html=True)
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 CDC", "💳 Cartão de Crédito", "📱 Serviços", "🏠 Contratos"])
     
     with tab1:
-        st.markdown("### 👤 Configurações de Perfil")
+        st.markdown("### 📋 Código de Defesa do Consumidor")
         
-        col1, col2 = st.columns(2)
+        direitos = [
+            "**Artigo 6°** - Direito à informação clara sobre produtos e serviços",
+            "**Artigo 18°** - Responsabilidade por vícios aparentes ou de fácil constatação",
+            "**Artigo 39°** - Práticas abusivas vedadas aos fornecedores", 
+            "**Artigo 49°** - Direito de arrependimento em 7 dias para compras fora do estabelecimento"
+        ]
         
-        with col1:
-            st.text_input("Nome completo:", value="João Silva")
-            st.text_input("Email:", value="joao.silva@email.com")
-            st.selectbox("Moeda padrão:", ["Real (R$)", "Dólar (US$)", "Euro (€)"])
-        
-        with col2:
-            st.text_input("Empresa/Ocupação:", value="Analista Financeiro")
-            st.selectbox("Idioma:", ["Português", "English", "Español"])
-            st.date_input("Data de nascimento:", value=datetime(1990, 1, 1))
-        
-        if st.button("💾 Salvar Perfil", type="primary"):
-            st.success("Perfil atualizado com sucesso!")
+        for direito in direitos:
+            st.markdown(f"• {direito}")
     
     with tab2:
-        st.markdown("### 🔧 Preferências do Usuário")
+        st.markdown("### 💳 Direitos no Cartão de Crédito")
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("#### 🎨 Aparência")
-            st.selectbox("Tema:", ["Claro", "Escuro", "Automático"])
-            st.selectbox("Densidade:", ["Confortável", "Compacto"])
-            st.checkbox("Mostrar tutoriais", value=True)
-        
-        with col2:
-            st.markdown("#### 📊 Relatórios")
-            st.selectbox("Formato de data:", ["DD/MM/AAAA", "MM/DD/AAAA", "AAAA-MM-DD"])
-            st.number_input("Casas decimais:", min_value=0, max_value=4, value=2)
-            st.checkbox("Notificações sonoras", value=False)
-        
-        if st.button("💾 Salvar Preferências"):
-            st.success("Preferências salvas com sucesso!")
+        st.markdown("""
+        - **Anuidade**: Só pode ser cobrada se explicitamente acordada
+        - **Limite**: Banco não pode reduzir limite sem comunicação prévia
+        - **Juros**: Máximo de 30% ao ano + taxa de risco (resolução CMN 4.539)
+        - **Compras não reconhecidas**: Você não paga enquanto não for comprovada a fraude
+        """)
     
     with tab3:
-        st.markdown("### 🛠️ Configurações do Sistema")
+        st.markdown("### 📱 Direitos em Serviços")
         
-        st.markdown("#### 💾 Backup de Dados")
-        col1, col2 = st.columns(2)
+        st.markdown("""
+        - **Telefonia/Internet**: Você pode cancelar sem multa se houver mudança na qualidade
+        - **Assinaturas**: Direito de cancelar a qualquer tempo (artigo 49 CDC)
+        - **Cobrança indevida**: Direito ao dobro do valor cobrado indevidamente + correção
+        - **Serviços essenciais**: Não podem ser cortados sem aviso prévio de 30 dias
+        """)
+    
+    with tab4:
+        st.markdown("### 🏠 Direitos em Contratos")
         
-        with col1:
-            if st.button("📤 Fazer Backup", type="primary"):
-                st.success("Backup realizado com sucesso!")
-                st.info("Dados salvos em: backup_financeiro.json")
-        
-        with col2:
-            if st.button("🔄 Restaurar Backup"):
-                st.warning("Esta ação substituirá todos os dados atuais!")
-        
-        st.markdown("#### 🗑️ Limpeza de Dados")
-        st.warning("⚠️ Área de operações críticas")
-        
-        if st.button("🧹 Limpar Todos os Dados", type="secondary"):
-            st.session_state.transactions = []
-            st.session_state.goals = []
-            st.session_state.budgets = {category: 0 for category in financial_manager.categories}
-            st.success("Todos os dados foram limpos!")
-            st.rerun()
+        st.markdown("""
+        - **Cláusulas abusivas**: São nulas de pleno direito (artigo 51 CDC)
+        - **Letras miúdas**: Não têm validade se você não as leu
+        - **Alteração unilateral**: Fornecedor não pode mudar contrato sozinho
+        - **Vícios ocultos**: Responsabilidade do fornecedor por até 90 dias após descoberta
+        """)
 
 # Rodapé
 st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center; color: #666;'>
-        💜 <strong>Clara Ready</strong> - Plataforma de Gestão Financeira Inteligente<br>
-        Desenvolvido com ❤️ usando Streamlit
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("""
+<div style='text-align: center; color: #666; padding: 2rem;'>
+    <strong>⚖️ Clara Ready</strong> - Seu assistente jurídico pessoal<br>
+    <small>Este serviço oferece orientação jurídica básica e não substitui consulta com advogado.</small>
+</div>
+""", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
