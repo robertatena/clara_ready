@@ -3,19 +3,15 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-import altair as alt
 from datetime import datetime, timedelta
-import io
-import base64
-import sqlite3
 import json
-import PyPDF2
-import os
-import re
-from typing import Dict, List, Any, Optional
+import time
+import base64
+from typing import Dict, List, Tuple, Optional
+import io
+import requests
 
-# ===== CONFIGURAÇÃO DA PÁGINA =====
+# Configuração da página
 st.set_page_config(
     page_title="Clara Ready - Plataforma de Gestão Financeira",
     page_icon="💜",
@@ -23,811 +19,717 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ===== CSS PERSONALIZADO =====
+# CSS personalizado
 st.markdown("""
 <style>
     .main-header {
-        font-size: 3rem;
-        color: #6A0DAD;
+        font-size: 2.5rem;
+        color: #6a0dad;
         text-align: center;
         margin-bottom: 2rem;
         font-weight: bold;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
     }
     .sub-header {
-        font-size: 1.8rem;
-        color: #8A2BE2;
-        margin: 1.5rem 0;
-        font-weight: bold;
-        border-left: 5px solid #8A2BE2;
-        padding-left: 1rem;
+        font-size: 1.5rem;
+        color: #8a2be2;
+        margin-bottom: 1rem;
+        font-weight: 600;
     }
     .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1.5rem;
-        border-radius: 15px;
-        color: white;
-        text-align: center;
-        margin: 0.5rem 0;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }
-    .feature-card {
-        background: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 12px;
-        border-left: 4px solid #6A0DAD;
-        margin: 1rem 0;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-    }
-    .stButton>button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        padding: 0.75rem 2rem;
-        border-radius: 25px;
-        font-weight: bold;
-        font-size: 1rem;
-        transition: all 0.3s ease;
-        width: 100%;
-    }
-    .stButton>button:hover {
-        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
-        color: white;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-    }
-    .analysis-result {
-        background: white;
+        background-color: #f8f9fa;
         padding: 1.5rem;
         border-radius: 10px;
-        border: 1px solid #e0e0e0;
+        border-left: 4px solid #6a0dad;
+        margin-bottom: 1rem;
+    }
+    .success-metric {
+        border-left: 4px solid #28a745;
+    }
+    .warning-metric {
+        border-left: 4px solid #ffc107;
+    }
+    .danger-metric {
+        border-left: 4px solid #dc3545;
+    }
+    .feature-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 15px;
         margin: 1rem 0;
-    }
-    .risk-high {
-        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-        font-weight: bold;
-    }
-    .risk-medium {
-        background: linear-gradient(135deg, #ffa726 0%, #fb8c00 100%);
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-        font-weight: bold;
-    }
-    .risk-low {
-        background: linear-gradient(135deg, #66bb6a 0%, #4caf50 100%);
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-        font-weight: bold;
-    }
-    .sidebar .sidebar-content {
-        background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
+        text-align: center;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ===== FUNÇÕES DO BANCO DE DADOS =====
-def init_database():
-    """Inicializa o banco de dados SQLite"""
-    try:
-        conn = sqlite3.connect('clara_ready.db', check_same_thread=False)
-        cursor = conn.cursor()
-        
-        # Tabela de usuários
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                password TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                plan_type TEXT DEFAULT 'basic'
-            )
-        ''')
-        
-        # Tabela de análises
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS analyses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                filename TEXT NOT NULL,
-                file_content BLOB,
-                analysis_result TEXT,
-                risk_score INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (id)
-            )
-        ''')
-        
-        # Tabela de eventos
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                event_type TEXT,
-                details TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (id)
-            )
-        ''')
-        
-        conn.commit()
-        return conn
-    except Exception as e:
-        st.error(f"Erro ao inicializar banco de dados: {e}")
-        return None
-
-def create_user(email: str, password: str) -> bool:
-    """Cria um novo usuário"""
-    try:
-        conn = init_database()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO users (email, password) VALUES (?, ?)",
-            (email, password)  # Em produção, usar hash para senha
-        )
-        conn.commit()
-        conn.close()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    except Exception as e:
-        st.error(f"Erro ao criar usuário: {e}")
-        return False
-
-def authenticate_user(email: str, password: str) -> Dict[str, Any]:
-    """Autentica um usuário"""
-    try:
-        conn = init_database()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, email, plan_type FROM users WHERE email = ? AND password = ?",
-            (email, password)
-        )
-        user = cursor.fetchone()
-        conn.close()
-        
-        if user:
-            return {
-                'id': user[0],
-                'email': user[1],
-                'plan_type': user[2]
-            }
-        return None
-    except Exception as e:
-        st.error(f"Erro na autenticação: {e}")
-        return None
-
-def save_analysis(user_id: int, filename: str, analysis_result: Dict[str, Any]) -> int:
-    """Salva uma análise no banco de dados"""
-    try:
-        conn = init_database()
-        cursor = conn.cursor()
-        cursor.execute(
-            """INSERT INTO analyses (user_id, filename, analysis_result, risk_score) 
-               VALUES (?, ?, ?, ?)""",
-            (user_id, filename, json.dumps(analysis_result), analysis_result['pontuacao'])
-        )
-        analysis_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return analysis_id
-    except Exception as e:
-        st.error(f"Erro ao salvar análise: {e}")
-        return -1
-
-def get_user_analyses(user_id: int) -> List[Dict[str, Any]]:
-    """Recupera análises do usuário"""
-    try:
-        conn = init_database()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, filename, analysis_result, risk_score, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC",
-            (user_id,)
-        )
-        
-        analyses = []
-        for row in cursor.fetchall():
-            analyses.append({
-                'id': row[0],
-                'filename': row[1],
-                'result': json.loads(row[2]),
-                'risk_score': row[3],
-                'date': datetime.fromisoformat(row[4])
-            })
-        conn.close()
-        return analyses
-    except Exception as e:
-        st.error(f"Erro ao recuperar análises: {e}")
-        return []
-
-# ===== FUNÇÕES DE ANÁLISE DE PDF =====
-def extract_text_from_pdf(pdf_file) -> str:
-    """Extrai texto de um arquivo PDF"""
-    try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in pdf_reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-        
-        if not text.strip():
-            raise Exception("PDF não contém texto legível")
-            
-        return text
-    except Exception as e:
-        raise Exception(f"Erro ao extrair texto do PDF: {str(e)}")
-
-def analyze_contract_text(text: str) -> Dict[str, Any]:
-    """Analisa o texto do contrato e identifica riscos"""
+class FinancialManager:
+    def __init__(self):
+        self.transactions = []
+        self.categories = [
+            "Alimentação", "Transporte", "Moradia", "Saúde", 
+            "Educação", "Lazer", "Vestuário", "Outros"
+        ]
+        self.initialize_data()
     
-    # Dicionário de palavras-chave por categoria de risco
-    risk_categories = {
-        'financeiro': {
-            'keywords': ['multa', 'juros', 'indenização', 'garantia', 'caução', 'penhora', 'execução', 'dívida', 'pagamento', 'valor', 'preço', 'custas'],
-            'weight': 1.2
-        },
-        'contratual': {
-            'keywords': ['rescisão', 'resolução', 'vigência', 'prazo', 'renovação', 'exclusivo', 'confidencialidade', 'propriedade', 'licença'],
-            'weight': 1.0
-        },
-        'legal': {
-            'keywords': ['jurisdição', 'foro', 'arbitragem', 'lei', 'legislação', 'tribunal', 'justiça', 'cláusula', 'penal', 'civil'],
-            'weight': 1.1
-        },
-        'operacional': {
-            'keywords': ['prazo', 'entrega', 'qualidade', 'especificação', 'inspeção', 'teste', 'aprovação', 'rejeição', 'defeito'],
-            'weight': 0.9
+    def initialize_data(self):
+        if 'transactions' not in st.session_state:
+            st.session_state.transactions = []
+        if 'goals' not in st.session_state:
+            st.session_state.goals = []
+        if 'budgets' not in st.session_state:
+            st.session_state.budgets = {category: 0 for category in self.categories}
+    
+    def add_transaction(self, amount: float, category: str, description: str, date: datetime, type: str = "expense"):
+        transaction = {
+            'id': len(st.session_state.transactions) + 1,
+            'amount': amount,
+            'category': category,
+            'description': description,
+            'date': date,
+            'type': type  # 'income' or 'expense'
         }
-    }
+        st.session_state.transactions.append(transaction)
+        return transaction
     
-    text_lower = text.lower()
-    riscos_encontrados = []
-    pontuacao_total = 0
-    max_pontos = 100
+    def add_goal(self, name: str, target_amount: float, current_amount: float, deadline: datetime):
+        goal = {
+            'id': len(st.session_state.goals) + 1,
+            'name': name,
+            'target_amount': target_amount,
+            'current_amount': current_amount,
+            'deadline': deadline,
+            'created_at': datetime.now()
+        }
+        st.session_state.goals.append(goal)
+        return goal
     
-    # Análise por categoria
-    for categoria, config in risk_categories.items():
-        for keyword in config['keywords']:
-            if keyword in text_lower:
-                # Encontrar contexto da palavra-chave
-                start = max(0, text_lower.find(keyword) - 50)
-                end = min(len(text_lower), text_lower.find(keyword) + len(keyword) + 50)
-                contexto = text[start:end].strip()
-                
-                risco = {
-                    'categoria': categoria.upper(),
-                    'keyword': keyword,
-                    'contexto': contexto,
-                    'severidade': 'ALTA' if config['weight'] > 1.0 else 'MÉDIA'
-                }
-                riscos_encontrados.append(risco)
-                pontuacao_total += 10 * config['weight']
+    def get_financial_summary(self) -> Dict:
+        total_income = sum(t['amount'] for t in st.session_state.transactions if t['type'] == 'income')
+        total_expenses = sum(t['amount'] for t in st.session_state.transactions if t['type'] == 'expense')
+        balance = total_income - total_expenses
+        
+        expenses_by_category = {}
+        for category in self.categories:
+            category_expenses = sum(t['amount'] for t in st.session_state.transactions 
+                                  if t['type'] == 'expense' and t['category'] == category)
+            expenses_by_category[category] = category_expenses
+        
+        return {
+            'total_income': total_income,
+            'total_expenses': total_expenses,
+            'balance': balance,
+            'expenses_by_category': expenses_by_category
+        }
+
+# Inicializar gerenciador financeiro
+financial_manager = FinancialManager()
+
+def main():
+    st.markdown('<div class="main-header">💜 Clara Ready - Plataforma de Gestão Financeira Inteligente</div>', unsafe_allow_html=True)
     
-    # Limitar pontuação máxima
-    pontuacao_final = min(max_pontos, pontuacao_total)
-    
-    # Gerar recomendações baseadas nos riscos encontrados
-    recomendacoes = [
-        "Revise cuidadosamente todas as cláusulas identificadas",
-        "Consulte um especialista jurídico para análise detalhada",
-        "Negocie termos mais favoráveis quando possível",
-        "Documente todas as observações e preocupações",
-        "Estabeleça plano de ação para mitigação de riscos"
+    # Menu lateral
+    st.sidebar.title("Navegação")
+    menu_options = [
+        "📊 Dashboard Principal",
+        "💸 Gestão de Transações",
+        "🎯 Metas Financeiras",
+        "📈 Orçamentos",
+        "📋 Relatórios",
+        "🔔 Alertas",
+        "⚙️ Configurações"
     ]
+    selected_menu = st.sidebar.selectbox("Selecione uma opção:", menu_options)
     
-    # Adicionar recomendações específicas baseadas na pontuação
-    if pontuacao_final >= 70:
-        recomendacoes.append("⚠️ ALERTA: Contrato apresenta riscos significativos - análise jurídica obrigatória")
-    elif pontuacao_final >= 40:
-        recomendacoes.append("📋 Contrato requer atenção especial em cláusulas críticas")
+    # Filtros globais
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Filtros")
     
-    return {
-        "riscos": riscos_encontrados[:8],  # Limitar a 8 riscos principais
-        "recomendacoes": recomendacoes,
-        "pontuacao": int(pontuacao_final),
-        "total_riscos": len(riscos_encontrados),
-        "categorias_afetadas": list(set([r['categoria'] for r in riscos_encontrados]))
-    }
-
-def generate_executive_summary(analysis_result: Dict[str, Any]) -> str:
-    """Gera um resumo executivo da análise"""
-    nivel_risco = "BAIXO"
-    cor_risco = "🟢"
+    # Filtro de período
+    period_options = ["Últimos 7 dias", "Últimos 30 dias", "Últimos 90 dias", "Este mês", "Personalizado"]
+    selected_period = st.sidebar.selectbox("Período:", period_options)
     
-    if analysis_result['pontuacao'] >= 70:
-        nivel_risco = "ALTO"
-        cor_risco = "🔴"
-    elif analysis_result['pontuacao'] >= 40:
-        nivel_risco = "MÉDIO"
-        cor_risco = "🟡"
+    if selected_period == "Personalizado":
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            start_date = st.date_input("Data inicial")
+        with col2:
+            end_date = st.date_input("Data final")
     
-    return f"""
-{cor_risco} **RESUMO EXECUTIVO - CLARA READY**
-
-**Nível de Risco:** {nivel_risco}
-**Pontuação:** {analysis_result['pontuacao']}/100
-**Total de Riscos Identificados:** {analysis_result['total_riscos']}
-**Categorias Afetadas:** {', '.join(analysis_result['categorias_afetadas'])}
-
-**Principais Observações:**
-- Contrato analisado através de inteligência artificial
-- {analysis_result['total_riscos']} pontos de atenção identificados
-- Recomenda-se {'' if nivel_risco == 'BAIXO' else 'fortemente '}revisão por especialista
-
-**Status:** {'✅ Dentro dos parâmetros esperados' if nivel_risco == 'BAIXO' else '⚠️ Requer atenção imediata'}
-"""
-
-# ===== FUNÇÕES DE RELATÓRIO =====
-def generate_pdf_report(analysis: Dict[str, Any]) -> bytes:
-    """Gera um relatório PDF da análise (simulação)"""
-    report_content = f"""
-RELATÓRIO DE ANÁLISE - CLARA READY
-==================================
-
-Arquivo: {analysis['filename']}
-Data da Análise: {analysis['date'].strftime('%d/%m/%Y às %H:%M')}
-Usuário: {st.session_state.current_user['email']}
-
-RESULTADO DA ANÁLISE
--------------------
-Pontuação de Risco: {analysis['result']['pontuacao']}/100
-Total de Riscos Identificados: {analysis['result']['total_riscos']}
-Categorias Envolvidas: {', '.join(analysis['result']['categorias_afetadas'])}
-
-RISCOS IDENTIFICADOS
--------------------
-{chr(10).join(f"- [{risco['categoria']}] {risco['keyword']} - Severidade: {risco['severidade']}{chr(10)}  Contexto: {risco['contexto'][:100]}..." for risco in analysis['result']['riscos'])}
-
-RECOMENDAÇÕES
--------------
-{chr(10).join(f"- {rec}" for rec in analysis['result']['recomendacoes'])}
-
-RESUMO EXECUTIVO
-----------------
-{generate_executive_summary(analysis['result'])}
-
----
-Relatório gerado automaticamente por Clara Ready
-Plataforma de Análise de Contratos Inteligente
-"""
-    return report_content.encode('utf-8')
-
-# ===== FUNÇÕES DE VISUALIZAÇÃO =====
-def create_risk_gauge(score: int):
-    """Cria um gráfico de gauge para mostrar o risco"""
-    fig = go.Figure(go.Indicator(
-        mode = "gauge+number+delta",
-        value = score,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': "Nível de Risco"},
-        delta = {'reference': 50},
-        gauge = {
-            'axis': {'range': [None, 100]},
-            'bar': {'color': "darkblue"},
-            'steps': [
-                {'range': [0, 30], 'color': "lightgreen"},
-                {'range': [30, 70], 'color': "yellow"},
-                {'range': [70, 100], 'color': "red"}
-            ],
-            'threshold': {
-                'line': {'color': "black", 'width': 4},
-                'thickness': 0.75,
-                'value': 90
-            }
-        }
-    ))
-    fig.update_layout(height=300)
-    return fig
-
-def create_risk_distribution_chart(analyses: List[Dict[str, Any]]):
-    """Cria gráfico de distribuição de riscos"""
-    if not analyses:
-        return None
+    # Dashboard Principal
+    if selected_menu == "📊 Dashboard Principal":
+        show_dashboard()
     
-    scores = [analysis['risk_score'] for analysis in analyses]
+    # Gestão de Transações
+    elif selected_menu == "💸 Gestão de Transações":
+        show_transaction_management()
     
-    fig = px.histogram(
-        x=scores,
-        nbins=10,
-        title="Distribuição das Pontuações de Risco",
-        labels={'x': 'Pontuação de Risco', 'y': 'Número de Contratos'}
-    )
-    fig.update_layout(height=300, showlegend=False)
-    return fig
-
-# ===== INICIALIZAÇÃO DA SESSÃO =====
-if 'user_authenticated' not in st.session_state:
-    st.session_state.user_authenticated = False
-if 'current_user' not in st.session_state:
-    st.session_state.current_user = None
-if 'analysis_history' not in st.session_state:
-    st.session_state.analysis_history = []
-if 'db_initialized' not in st.session_state:
-    st.session_state.db_initialized = init_database() is not None
-
-# ===== HEADER PRINCIPAL =====
-st.markdown('<div class="main-header">💜 Clara Ready</div>', unsafe_allow_html=True)
-st.markdown("### 🤖 Sua plataforma inteligente para análise de contratos financeiros")
-
-# ===== SIDEBAR =====
-with st.sidebar:
-    st.image("https://via.placeholder.com/200x200/6A0DAD/FFFFFF?text=CR", width=150)
-    st.markdown("---")
+    # Metas Financeiras
+    elif selected_menu == "🎯 Metas Financeiras":
+        show_financial_goals()
     
-    if not st.session_state.user_authenticated:
-        st.markdown("### 🔐 Acesso")
-        
-        login_tab, register_tab = st.tabs(["Login", "Cadastro"])
-        
-        with login_tab:
-            login_email = st.text_input("📧 Email", key="login_email")
-            login_password = st.text_input("🔒 Senha", type="password", key="login_password")
-            
-            if st.button("🚀 Entrar", key="login_btn", use_container_width=True):
-                if login_email and login_password:
-                    user = authenticate_user(login_email, login_password)
-                    if user:
-                        st.session_state.user_authenticated = True
-                        st.session_state.current_user = user
-                        st.session_state.analysis_history = get_user_analyses(user['id'])
-                        st.success(f"Bem-vindo, {user['email']}!") 
-                        st.rerun()
-                    else:
-                        st.error("Credenciais inválidas!")
-                else:
-                    st.warning("Preencha email e senha!")
-        
-        with register_tab:
-            reg_email = st.text_input("📧 Email", key="reg_email")
-            reg_password = st.text_input("🔒 Senha", type="password", key="reg_password")
-            reg_confirm = st.text_input("✅ Confirmar Senha", type="password", key="reg_confirm")
-            
-            if st.button("📝 Cadastrar", key="register_btn", use_container_width=True):
-                if reg_email and reg_password:
-                    if reg_password == reg_confirm:
-                        if create_user(reg_email, reg_password):
-                            st.success("Cadastro realizado! Faça login.")
-                        else:
-                            st.error("Email já cadastrado!")
-                    else:
-                        st.error("Senhas não coincidem!")
-                else:
-                    st.warning("Preencha todos os campos!")
+    # Orçamentos
+    elif selected_menu == "📈 Orçamentos":
+        show_budget_management()
     
-    else:
-        st.success(f"👋 Bem-vindo, {st.session_state.current_user['email']}!")
-        st.info(f"📊 Plano: {st.session_state.current_user['plan_type'].upper()}")
-        
-        if st.button("🚪 Sair", use_container_width=True):
-            st.session_state.user_authenticated = False
-            st.session_state.current_user = None
-            st.session_state.analysis_history = []
-            st.rerun()
-        
-        st.markdown("---")
-        st.markdown("### 📋 Análises Recentes")
-        
-        if st.session_state.analysis_history:
-            for i, analysis in enumerate(st.session_state.analysis_history[:5]):
-                risk_color = "🟢" if analysis['risk_score'] < 40 else "🟡" if analysis['risk_score'] < 70 else "🔴"
-                st.write(f"{risk_color} {analysis['filename'][:25]}... ({analysis['risk_score']}/100)")
-        else:
-            st.info("Nenhuma análise realizada")
+    # Relatórios
+    elif selected_menu == "📋 Relatórios":
+        show_reports()
+    
+    # Alertas
+    elif selected_menu == "🔔 Alertas":
+        show_alerts()
+    
+    # Configurações
+    elif selected_menu == "⚙️ Configurações":
+        show_settings()
 
-# ===== CONTEÚDO PRINCIPAL =====
-if not st.session_state.user_authenticated:
-    # PÁGINA DE BOAS-VINDAS
-    col1, col2 = st.columns([2, 1])
+def show_dashboard():
+    st.markdown('<div class="sub-header">📊 Dashboard Financeiro</div>', unsafe_allow_html=True)
+    
+    summary = financial_manager.get_financial_summary()
+    
+    # Métricas principais
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.markdown("""
-        ## 🚀 Transforme sua Análise de Contratos
-        
-        A **Clara Ready** utiliza **inteligência artificial avançada** para identificar 
-        riscos financeiros em seus contratos de forma **rápida, precisa e segura**.
-        
-        ### ✨ Por que escolher a Clara Ready?
-        
-        🔍 **Análise Detalhada** 
-        - Identificação automática de cláusulas críticas
-        - Detecção de termos potencialmente prejudiciais
-        - Análise contextual inteligente
-        
-        ⚠️ **Gestão de Riscos**
-        - Pontuação de risco personalizada
-        - Categorização por tipo de risco
-        - Alertas proativos para questões críticas
-        
-        💡 **Recomendações Inteligentes**
-        - Sugestões de mitigação baseadas em IA
-        - Insights acionáveis
-        - Orientações personalizadas
-        
-        📊 **Relatórios Completos**
-        - Dashboard interativo
-        - Relatórios executivos
-        - Histórico de análises
-        """)
+        st.markdown(f"""
+        <div class="metric-card success-metric">
+            <h3>💰 Receitas</h3>
+            <h2>R$ {summary['total_income']:,.2f}</h2>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        st.markdown("""
-        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                   padding: 2rem; border-radius: 15px; color: white; text-align: center; margin-bottom: 2rem;'>
-            <h3>🚀 Comece Agora!</h3>
-            <p>Cadastre-se gratuitamente e realize suas primeiras análises</p>
+        st.markdown(f"""
+        <div class="metric-card danger-metric">
+            <h3>💸 Despesas</h3>
+            <h2>R$ {summary['total_expenses']:,.2f}</h2>
         </div>
         """, unsafe_allow_html=True)
+    
+    with col3:
+        balance_class = "success-metric" if summary['balance'] >= 0 else "danger-metric"
+        st.markdown(f"""
+        <div class="metric-card {balance_class}">
+            <h3>⚖️ Saldo</h3>
+            <h2>R$ {summary['balance']:,.2f}</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        savings_rate = (summary['balance'] / summary['total_income'] * 100) if summary['total_income'] > 0 else 0
+        st.markdown(f"""
+        <div class="metric-card">
+            <h3>📈 Taxa de Poupança</h3>
+            <h2>{savings_rate:.1f}%</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Gráficos
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Gráfico de despesas por categoria
+        if summary['expenses_by_category']:
+            categories = list(summary['expenses_by_category'].keys())
+            values = list(summary['expenses_by_category'].values())
+            
+            fig = px.pie(
+                names=categories,
+                values=values,
+                title="Distribuição de Despesas por Categoria",
+                color_discrete_sequence=px.colors.sequential.Plasma
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Gráfico de evolução mensal (exemplo)
+        months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun']
+        income_data = [5000, 5200, 4800, 5500, 6000, 5800]
+        expense_data = [4500, 4700, 4200, 5000, 5200, 5100]
         
-        st.markdown("""
-        <div class='feature-card'>
-            <h4>🎯 Planos Disponíveis</h4>
-            <p><strong>🆓 Básico:</strong><br>3 análises/mês<br>Relatórios básicos</p>
-            <p><strong>💼 Profissional:</strong><br>Análises ilimitadas<br>Relatórios completos</p>
-            <p><strong>🏢 Empresarial:</strong><br>Recursos avançados<br>Suporte prioritário</p>
-        </div>
-        """, unsafe_allow_html=True)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=months, y=income_data, name='Receitas', line=dict(color='#28a745')))
+        fig.add_trace(go.Scatter(x=months, y=expense_data, name='Despesas', line=dict(color='#dc3545')))
+        fig.update_layout(title="Evolução Mensal - Receitas vs Despesas")
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Transações recentes
+    st.markdown("### 🔄 Transações Recentes")
+    if st.session_state.transactions:
+        recent_transactions = sorted(st.session_state.transactions, key=lambda x: x['date'], reverse=True)[:5]
         
-        st.markdown("""
-        <div class='feature-card'>
-            <h4>📈 Estatísticas</h4>
-            <p>• +1,000 contratos analisados</p>
-            <p>• 95% de precisão na detecção</p>
-            <p>• 40% de economia em revisões</p>
-            <p>• 100% de segurança dos dados</p>
-        </div>
-        """, unsafe_allow_html=True)
+        for transaction in recent_transactions:
+            transaction_type = "✅ Receita" if transaction['type'] == 'income' else "❌ Despesa"
+            color = "green" if transaction['type'] == 'income' else "red"
+            
+            st.markdown(f"""
+            <div style="border-left: 4px solid {color}; padding: 10px; margin: 5px 0; background-color: #f8f9fa;">
+                <strong>{transaction_type}</strong> - {transaction['description']}<br>
+                <small>Categoria: {transaction['category']} | Valor: R$ {transaction['amount']:,.2f}</small>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("Nenhuma transação cadastrada ainda.")
 
-else:
-    # USUÁRIO AUTENTICADO - FUNCIONALIDADES PRINCIPAIS
-    tab1, tab2, tab3, tab4 = st.tabs(["📁 Análise de Contratos", "📊 Dashboard", "📈 Relatórios", "⚙️ Configurações"])
+def show_transaction_management():
+    st.markdown('<div class="sub-header">💸 Gestão de Transações</div>', unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs(["➕ Nova Transação", "📋 Listar Transações", "🔍 Buscar Transações"])
     
     with tab1:
-        st.markdown('<div class="sub-header">🔍 Análise de Contratos</div>', unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
         
-        uploaded_file = st.file_uploader(
-            "📤 Faça upload do seu contrato em PDF", 
-            type=['pdf'],
-            help="Envie um arquivo PDF contendo o contrato para análise"
-        )
+        with col1:
+            transaction_type = st.radio("Tipo de Transação:", ["Receita", "Despesa"])
+            amount = st.number_input("Valor (R$):", min_value=0.0, step=0.01, format="%.2f")
+            category = st.selectbox("Categoria:", financial_manager.categories)
         
-        if uploaded_file is not None:
-            col1, col2 = st.columns([3, 1])
-            
-            with col1:
-                st.success(f"✅ Arquivo carregado: **{uploaded_file.name}**")
-                st.info(f"📄 Tamanho: {uploaded_file.size / 1024:.1f} KB")
-                
-                if st.button("🔍 Iniciar Análise do Contrato", type="primary", use_container_width=True):
-                    with st.spinner("🤖 Analisando contrato... Isso pode levar alguns segundos."):
-                        try:
-                            # Extrair texto do PDF
-                            text = extract_text_from_pdf(uploaded_file)
-                            
-                            if text and len(text.strip()) > 100:
-                                # Realizar análise
-                                analysis_result = analyze_contract_text(text)
-                                
-                                # Salvar no banco de dados
-                                analysis_id = save_analysis(
-                                    st.session_state.current_user['id'],
-                                    uploaded_file.name,
-                                    analysis_result
-                                )
-                                
-                                if analysis_id > 0:
-                                    # Atualizar histórico
-                                    new_analysis = {
-                                        'id': analysis_id,
-                                        'filename': uploaded_file.name,
-                                        'date': datetime.now(),
-                                        'result': analysis_result,
-                                        'risk_score': analysis_result['pontuacao']
-                                    }
-                                    st.session_state.analysis_history.insert(0, new_analysis)
-                                    
-                                    st.success("🎉 Análise concluída com sucesso!")
-                                    
-                                    # Exibir resultados
-                                    st.markdown("### 📋 Resultados da Análise")
-                                    
-                                    # Métricas principais
-                                    col_met1, col_met2, col_met3, col_met4 = st.columns(4)
-                                    with col_met1:
-                                        risk_class = "risk-high" if analysis_result['pontuacao'] >= 70 else "risk-medium" if analysis_result['pontuacao'] >= 40 else "risk-low"
-                                        st.markdown(f'<div class="{risk_class}">{analysis_result["pontuacao"]}/100</div>', unsafe_allow_html=True)
-                                        st.caption("Pontuação de Risco")
-                                    
-                                    with col_met2:
-                                        st.metric("Riscos Identificados", analysis_result['total_riscos'])
-                                    
-                                    with col_met3:
-                                        st.metric("Categorias Afetadas", len(analysis_result['categorias_afetadas']))
-                                    
-                                    with col_met4:
-                                        st.metric("Recomendações", len(analysis_result['recomendacoes']))
-                                    
-                                    # Gauge de risco
-                                    st.plotly_chart(create_risk_gauge(analysis_result['pontuacao']), use_container_width=True)
-                                    
-                                    # Resumo executivo
-                                    st.markdown("#### 📊 Resumo Executivo")
-                                    st.markdown(generate_executive_summary(analysis_result))
-                                    
-                                    # Riscos detalhados
-                                    st.markdown("#### ⚠️ Riscos Identificados")
-                                    for i, risco in enumerate(analysis_result['riscos'], 1):
-                                        with st.expander(f"**{i}. [{risco['categoria']}] {risco['keyword'].upper()}** - Severidade: {risco['severidade']}"):
-                                            st.write(f"**Contexto:** {risco['contexto']}")
-                                    
-                                    # Recomendações
-                                    st.markdown("#### 💡 Recomendações de Ação")
-                                    for i, recomendacao in enumerate(analysis_result['recomendacoes'], 1):
-                                        st.info(f"**{i}.** {recomendacao}")
-                                        
-                            else:
-                                st.error("❌ O arquivo PDF não contém texto suficiente para análise. Verifique se o documento é legível.")
-                                
-                        except Exception as e:
-                            st.error(f"❌ Erro durante a análise: {str(e)}")
-            
-            with col2:
-                st.markdown("""
-                <div class='feature-card'>
-                    <h4>🎯 Dicas para Melhor Análise</h4>
-                    <p>• Use PDFs com texto selecionável</p>
-                    <p>• Verifique a qualidade do documento</p>
-                    <p>• Inclua todas as páginas relevantes</p>
-                    <p>• Evite documentos escaneados com baixa qualidade</p>
-                    <p>• Certifique-se de que o texto está legível</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                st.markdown("""
-                <div class='feature-card'>
-                    <h4>📊 Interpretação de Resultados</h4>
-                    <p><strong>0-39:</strong> Baixo Risco</p>
-                    <p><strong>40-69:</strong> Risco Moderado</p>
-                    <p><strong>70-100:</strong> Alto Risco</p>
-                </div>
-                """, unsafe_allow_html=True)
+        with col2:
+            description = st.text_input("Descrição:")
+            transaction_date = st.date_input("Data:", datetime.now())
         
-        else:
-            st.info("""
-            👆 **Faça upload de um arquivo PDF** para começar a análise
-            
-            A Clara Ready irá analisar automaticamente:
-            • Cláusulas financeiras e de pagamento
-            • Prazos e condições contratuais
-            • Aspectos legais e jurisdicionais  
-            • Riscos operacionais e de desempenho
-            """)
+        if st.button("💾 Salvar Transação", type="primary"):
+            if amount > 0 and description:
+                type_str = "income" if transaction_type == "Receita" else "expense"
+                financial_manager.add_transaction(
+                    amount=amount,
+                    category=category,
+                    description=description,
+                    date=transaction_date,
+                    type=type_str
+                )
+                st.success("✅ Transação salva com sucesso!")
+                st.rerun()
+            else:
+                st.error("❌ Preencha todos os campos obrigatórios.")
     
     with tab2:
-        st.markdown('<div class="sub-header">📊 Dashboard Financeiro</div>', unsafe_allow_html=True)
-        
-        if st.session_state.analysis_history:
-            # Métricas principais
-            col1, col2, col3, col4 = st.columns(4)
-            
-            total_analises = len(st.session_state.analysis_history)
-            risco_medio = np.mean([a['risk_score'] for a in st.session_state.analysis_history])
-            total_riscos = sum([a['result']['total_riscos'] for a in st.session_state.analysis_history])
-            economia_estimada = total_riscos * 1200  # Valor estimado por risco identificado
-            
+        if st.session_state.transactions:
+            # Filtros
+            col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("📈 Contratos Analisados", total_analises)
+                filter_type = st.selectbox("Filtrar por tipo:", ["Todos", "Receita", "Despesa"])
             with col2:
-                st.metric("⚖️ Risco Médio", f"{risco_medio:.1f}/100")
+                filter_category = st.selectbox("Filtrar por categoria:", ["Todas"] + financial_manager.categories)
             with col3:
-                st.metric("⚠️ Riscos Totais", total_riscos)
-            with col4:
-                st.metric("💰 Economia Estimada", f"R$ {economia_estimada:,}")
+                start_date_filter = st.date_input("Data inicial:", datetime.now() - timedelta(days=30))
             
-            # Gráficos
-            col_chart1, col_chart2 = st.columns(2)
+            # Aplicar filtros
+            filtered_transactions = st.session_state.transactions.copy()
             
-            with col_chart1:
-                st.plotly_chart(create_risk_distribution_chart(st.session_state.analysis_history), use_container_width=True)
+            if filter_type != "Todos":
+                type_filter = "income" if filter_type == "Receita" else "expense"
+                filtered_transactions = [t for t in filtered_transactions if t['type'] == type_filter]
             
-            with col_chart2:
-                # Gráfico de tendência temporal
-                if len(st.session_state.analysis_history) > 1:
-                    dates = [a['date'] for a in st.session_state.analysis_history]
-                    scores = [a['risk_score'] for a in st.session_state.analysis_history]
-                    
-                    fig = px.line(
-                        x=dates, y=scores,
-                        title="Evolução do Risco ao Longo do Tempo",
-                        labels={'x': 'Data', 'y': 'Pontuação de Risco'}
-                    )
-                    fig.update_layout(height=300)
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("📈 Execute mais análises para ver a evolução temporal")
+            if filter_category != "Todas":
+                filtered_transactions = [t for t in filtered_transactions if t['category'] == filter_category]
             
-            # Análises recentes detalhadas
-            st.markdown("#### 📋 Histórico de Análises")
-            for analysis in st.session_state.analysis_history[:5]:
-                with st.expander(f"{analysis['filename']} - {analysis['date'].strftime('%d/%m/%Y %H:%M')} - Score: {analysis['risk_score']}/100"):
-                    st.write(f"**Riscos Identificados:** {analysis['result']['total_riscos']}")
-                    st.write(f"**Categorias:** {', '.join(analysis['result']['categorias_afetadas'])}")
-                    st.write(f"**Resumo:** {generate_executive_summary(analysis['result']).split('Status:')[0]}")
-        
+            filtered_transactions = [t for t in filtered_transactions if t['date'] >= start_date_filter]
+            
+            # Tabela de transações
+            st.markdown("### 📋 Transações Filtradas")
+            for transaction in filtered_transactions:
+                with st.expander(f"{transaction['date'].strftime('%d/%m/%Y')} - {transaction['description']} - R$ {transaction['amount']:,.2f}"):
+                    col1, col2, col3 = st.columns([3, 2, 1])
+                    with col1:
+                        st.write(f"**Descrição:** {transaction['description']}")
+                        st.write(f"**Categoria:** {transaction['category']}")
+                    with col2:
+                        st.write(f"**Valor:** R$ {transaction['amount']:,.2f}")
+                        st.write(f"**Tipo:** {'✅ Receita' if transaction['type'] == 'income' else '❌ Despesa'}")
+                    with col3:
+                        if st.button("🗑️", key=f"delete_{transaction['id']}"):
+                            st.session_state.transactions = [t for t in st.session_state.transactions if t['id'] != transaction['id']]
+                            st.success("Transação excluída!")
+                            st.rerun()
         else:
-            st.info("""
-            📊 **Execute algumas análises** para ver métricas e gráficos interativos
-            
-            O dashboard mostrará:
-            • Evolução do risco ao longo do tempo
-            • Distribuição das pontuações
-            • Estatísticas consolidadas
-            • Insights e tendências
-            """)
+            st.info("Nenhuma transação cadastrada ainda.")
     
     with tab3:
-        st.markdown('<div class="sub-header">📈 Relatórios Detalhados</div>', unsafe_allow_html=True)
+        st.markdown("### 🔍 Busca Avançada")
+        search_term = st.text_input("Termo de busca:")
         
-        if st.session_state.analysis_history:
-            selected_analysis = st.selectbox(
-                "📋 Selecione uma análise para gerar relatório:",
-                options=st.session_state.analysis_history,
-                format_func=lambda x: f"{x['filename']} - {x['date'].strftime('%d/%m/%Y %H:%M')} - Score: {x['risk_score']}/100"
+        if search_term:
+            results = [t for t in st.session_state.transactions 
+                      if search_term.lower() in t['description'].lower()]
+            
+            if results:
+                st.success(f"🔍 {len(results)} transação(ões) encontrada(s)")
+                for transaction in results:
+                    st.write(f"**{transaction['date'].strftime('%d/%m/%Y')}** - {transaction['description']} - R$ {transaction['amount']:,.2f}")
+            else:
+                st.warning("Nenhuma transação encontrada com o termo buscado.")
+
+def show_financial_goals():
+    st.markdown('<div class="sub-header">🎯 Metas Financeiras</div>', unsafe_allow_html=True)
+    
+    tab1, tab2 = st.tabs(["🎯 Nova Meta", "📊 Minhas Metas"])
+    
+    with tab1:
+        st.markdown("### 🎯 Criar Nova Meta Financeira")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            goal_name = st.text_input("Nome da Meta:")
+            target_amount = st.number_input("Valor Alvo (R$):", min_value=0.0, step=0.01, format="%.2f")
+        
+        with col2:
+            current_amount = st.number_input("Valor Atual (R$):", min_value=0.0, step=0.01, format="%.2f")
+            deadline = st.date_input("Data Limite:", min_value=datetime.now().date())
+        
+        if st.button("🎯 Criar Meta", type="primary"):
+            if goal_name and target_amount > 0:
+                financial_manager.add_goal(
+                    name=goal_name,
+                    target_amount=target_amount,
+                    current_amount=current_amount,
+                    deadline=deadline
+                )
+                st.success("✅ Meta criada com sucesso!")
+                st.rerun()
+            else:
+                st.error("❌ Preencha todos os campos obrigatórios.")
+    
+    with tab2:
+        if st.session_state.goals:
+            st.markdown("### 📊 Progresso das Metas")
+            
+            for goal in st.session_state.goals:
+                progress = (goal['current_amount'] / goal['target_amount']) * 100
+                days_remaining = (goal['deadline'] - datetime.now().date()).days
+                
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.write(f"**{goal['name']}**")
+                    st.progress(progress / 100)
+                    st.write(f"R$ {goal['current_amount']:,.2f} de R$ {goal['target_amount']:,.2f} ({progress:.1f}%)")
+                    st.write(f"⏰ {days_remaining} dias restantes")
+                
+                with col2:
+                    # Atualizar progresso
+                    new_amount = st.number_input(
+                        "Atualizar valor:",
+                        min_value=0.0,
+                        value=float(goal['current_amount']),
+                        step=0.01,
+                        format="%.2f",
+                        key=f"update_{goal['id']}"
+                    )
+                    if st.button("💾 Atualizar", key=f"save_{goal['id']}"):
+                        goal['current_amount'] = new_amount
+                        st.success("Progresso atualizado!")
+                        st.rerun()
+                    
+                    if st.button("🗑️ Excluir", key=f"delete_goal_{goal['id']}"):
+                        st.session_state.goals = [g for g in st.session_state.goals if g['id'] != goal['id']]
+                        st.success("Meta excluída!")
+                        st.rerun()
+                
+                st.markdown("---")
+        else:
+            st.info("🎯 Nenhuma meta financeira cadastrada ainda.")
+
+def show_budget_management():
+    st.markdown('<div class="sub-header">📈 Gestão de Orçamentos</div>', unsafe_allow_html=True)
+    
+    st.markdown("### 💰 Definir Orçamentos por Categoria")
+    
+    summary = financial_manager.get_financial_summary()
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📋 Orçamentos Mensais")
+        for category in financial_manager.categories:
+            current_budget = st.session_state.budgets.get(category, 0)
+            spent = summary['expenses_by_category'].get(category, 0)
+            
+            new_budget = st.number_input(
+                f"{category}:",
+                min_value=0.0,
+                value=float(current_budget),
+                step=10.0,
+                format="%.2f",
+                key=f"budget_{category}"
             )
             
-            if selected_analysis:
-                col_report1, col_report2 = st.columns([3, 1])
-                
-                with col_report1:
-                    st.markdown("#### 📄 Visualização do Relatório")
-                    
-                    # Resumo executivo
-                    st.markdown(generate_executive_summary(selected_analysis['result']))
-                    
-                    # Detalhes da análise
-                    st.markdown("##### 📊 Detalhes da Análise")
-                    st.json(selected_analysis['result'], expanded=False)
-                
-                with col_report2:
-                    st.markdown("#### 📥 Exportar Relatório")
-                    
-                    # Botão de download
-                    report_data = generate_pdf_report(selected_analysis)
-                    st.download_button(
-                        label="💾 Baixar PDF",
-                        data=report_data,
-                        file_name=f"relatorio_{selected_analysis['filename'][:-4]}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-                        mime="text/plain",
-                        use_container_width=True
-                    )
-                    
-                    st.download_button(
-                        label="📊 Exportar JSON",
-                        data=json.dumps(selected_analysis, indent=2, ensure_ascii=False),
-                        file_name=f"dados_{selected_analysis['filename'][:-4]}.json",
-                        mime="application/json",
-                        use_container_width=True
-                    )
-        
-        else:
-            st.info("📄 **Execute análises** para gerar relatórios detalhados")
-    
-    with tab4:
-        st.markdown('<div class="sub-header">⚙️ Configurações</div>', unsafe_allow_html=True)
-        
-        col_set1, col_set2 = st.columns(2)
-        
-        with col_set1:
-            st.markdown("#### 📧 Preferências de Notificação")
-            notif_email = st.checkbox("Receber notificações por email", value=True)
-            notif_alert = st.checkbox("Alertas para riscos altos", value=True)
-            notif_weekly = st.checkbox("Relatório semanal resumido", value=False)
+            # Atualizar orçamento
+            st.session_state.budgets[category] = new_budget
             
-            st.markdown("#### 🎨 Personalização")
-            tema = st.selectbox("Tema da
+            # Mostrar progresso
+            if new_budget > 0:
+                progress = min((spent / new_budget) * 100, 100)
+                color = "green" if progress < 80 else "orange" if progress < 100 else "red"
+                
+                st.markdown(f"""
+                <div style="margin-bottom: 15px;">
+                    <small>Gasto: R$ {spent:,.2f} / R$ {new_budget:,.2f}</small>
+                    <div style="background-color: #e0e0e0; border-radius: 5px; height: 10px;">
+                        <div style="background-color: {color}; width: {progress}%; height: 10px; border-radius: 5px;"></div>
+                    </div>
+                    <small>{progress:.1f}% utilizado</small>
+                </div>
+                """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("#### 📊 Resumo dos Orçamentos")
+        
+        total_budget = sum(st.session_state.budgets.values())
+        total_spent = sum(summary['expenses_by_category'].values())
+        
+        if total_budget > 0:
+            overall_progress = (total_spent / total_budget) * 100
+            
+            st.metric("Orçamento Total", f"R$ {total_budget:,.2f}")
+            st.metric("Total Gasto", f"R$ {total_spent:,.2f}")
+            st.metric("Saldo Disponível", f"R$ {total_budget - total_spent:,.2f}")
+            
+            st.markdown(f"""
+            <div style="text-align: center; margin-top: 20px;">
+                <h4>Utilização Geral: {overall_progress:.1f}%</h4>
+                <div style="background-color: #e0e0e0; border-radius: 10px; height: 20px;">
+                    <div style="background-color: {'green' if overall_progress < 80 else 'orange' if overall_progress < 100 else 'red'}; 
+                                width: {min(overall_progress, 100)}%; height: 20px; border-radius: 10px;"></div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+def show_reports():
+    st.markdown('<div class="sub-header">📋 Relatórios Financeiros</div>', unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs(["📈 Relatório Mensal", "📊 Análise por Categoria", "💾 Exportar Dados"])
+    
+    with tab1:
+        st.markdown("### 📈 Relatório Mensal")
+        
+        # Gráfico de receitas vs despesas
+        months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun']
+        income_data = [5000, 5200, 4800, 5500, 6000, 5800]
+        expense_data = [4500, 4700, 4200, 5000, 5200, 5100]
+        savings_data = [i - e for i, e in zip(income_data, expense_data)]
+        
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=months, y=income_data, name='Receitas', marker_color='#28a745'))
+        fig.add_trace(go.Bar(x=months, y=expense_data, name='Despesas', marker_color='#dc3545'))
+        fig.add_trace(go.Scatter(x=months, y=savings_data, name='Poupança', line=dict(color='#6a0dad', width=4)))
+        
+        fig.update_layout(
+            title="Evolução Mensal - Receitas, Despesas e Poupança",
+            barmode='group'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with tab2:
+        st.markdown("### 📊 Análise Detalhada por Categoria")
+        
+        summary = financial_manager.get_financial_summary()
+        
+        if summary['expenses_by_category']:
+            # Gráfico de barras horizontal
+            categories = list(summary['expenses_by_category'].keys())
+            values = list(summary['expenses_by_category'].values())
+            
+            fig = px.bar(
+                x=values,
+                y=categories,
+                orientation='h',
+                title="Despesas por Categoria",
+                color=values,
+                color_continuous_scale='Viridis'
+            )
+            fig.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Tabela detalhada
+            st.markdown("### 📋 Tabela de Despesas")
+            expense_data = []
+            for category, amount in summary['expenses_by_category'].items():
+                if amount > 0:
+                    budget = st.session_state.budgets.get(category, 0)
+                    percentage = (amount / budget * 100) if budget > 0 else 0
+                    expense_data.append({
+                        'Categoria': category,
+                        'Valor Gasto': amount,
+                        'Orçamento': budget,
+                        'Utilização (%)': percentage
+                    })
+            
+            if expense_data:
+                df = pd.DataFrame(expense_data)
+                st.dataframe(df.style.format({
+                    'Valor Gasto': 'R$ {:.2f}',
+                    'Orçamento': 'R$ {:.2f}',
+                    'Utilização (%)': '{:.1f}%'
+                }))
+    
+    with tab3:
+        st.markdown("### 💾 Exportar Dados")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📥 Exportar Transações para CSV"):
+                if st.session_state.transactions:
+                    df = pd.DataFrame(st.session_state.transactions)
+                    csv = df.to_csv(index=False)
+                    
+                    st.download_button(
+                        label="⬇️ Baixar CSV",
+                        data=csv,
+                        file_name=f"transacoes_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.warning("Nenhuma transação para exportar.")
+        
+        with col2:
+            if st.button("📊 Exportar Relatório PDF"):
+                st.info("Funcionalidade de exportação PDF em desenvolvimento")
+
+def show_alerts():
+    st.markdown('<div class="sub-header">🔔 Alertas e Notificações</div>', unsafe_allow_html=True)
+    
+    # Alertas baseados nos dados atuais
+    summary = financial_manager.get_financial_summary()
+    alerts = []
+    
+    # Verificar orçamentos estourados
+    for category, budget in st.session_state.budgets.items():
+        spent = summary['expenses_by_category'].get(category, 0)
+        if budget > 0 and spent > budget:
+            alerts.append({
+                'type': 'warning',
+                'message': f"⚠️ Orçamento de {category} estourado! Gasto: R$ {spent:,.2f} | Orçamento: R$ {budget:,.2f}"
+            })
+    
+    # Verificar metas próximas do prazo
+    for goal in st.session_state.goals:
+        days_remaining = (goal['deadline'] - datetime.now().date()).days
+        progress = (goal['current_amount'] / goal['target_amount']) * 100
+        
+        if days_remaining <= 7 and progress < 100:
+            alerts.append({
+                'type': 'info',
+                'message': f"🎯 Meta '{goal['name']}' vence em {days_remaining} dias! Progresso: {progress:.1f}%"
+            })
+    
+    # Verificar saldo negativo
+    if summary['balance'] < 0:
+        alerts.append({
+            'type': 'error',
+            'message': f"❌ Saldo negativo! Valor: R$ {abs(summary['balance']):,.2f}"
+        })
+    
+    # Mostrar alertas
+    if alerts:
+        st.markdown("### 🔔 Alertas Ativos")
+        for alert in alerts:
+            if alert['type'] == 'error':
+                st.error(alert['message'])
+            elif alert['type'] == 'warning':
+                st.warning(alert['message'])
+            else:
+                st.info(alert['message'])
+    else:
+        st.success("✅ Nenhum alerta ativo no momento!")
+    
+    # Configurações de alerta
+    st.markdown("### ⚙️ Configurações de Alerta")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.checkbox("Notificar quando orçamento estourar", value=True)
+        st.checkbox("Notificar sobre metas próximas do prazo", value=True)
+        st.checkbox("Alertas de saldo negativo", value=True)
+    
+    with col2:
+        st.checkbox("Relatório semanal automático", value=False)
+        st.checkbox("Notificações por email", value=False)
+        st.number_input("Dias para alerta de metas:", min_value=1, value=7)
+
+def show_settings():
+    st.markdown('<div class="sub-header">⚙️ Configurações do Sistema</div>', unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs(["👤 Perfil", "🔧 Preferências", "🛠️ Sistema"])
+    
+    with tab1:
+        st.markdown("### 👤 Configurações de Perfil")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.text_input("Nome completo:", value="João Silva")
+            st.text_input("Email:", value="joao.silva@email.com")
+            st.selectbox("Moeda padrão:", ["Real (R$)", "Dólar (US$)", "Euro (€)"])
+        
+        with col2:
+            st.text_input("Empresa/Ocupação:", value="Analista Financeiro")
+            st.selectbox("Idioma:", ["Português", "English", "Español"])
+            st.date_input("Data de nascimento:", value=datetime(1990, 1, 1))
+        
+        if st.button("💾 Salvar Perfil", type="primary"):
+            st.success("Perfil atualizado com sucesso!")
+    
+    with tab2:
+        st.markdown("### 🔧 Preferências do Usuário")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 🎨 Aparência")
+            st.selectbox("Tema:", ["Claro", "Escuro", "Automático"])
+            st.selectbox("Densidade:", ["Confortável", "Compacto"])
+            st.checkbox("Mostrar tutoriais", value=True)
+        
+        with col2:
+            st.markdown("#### 📊 Relatórios")
+            st.selectbox("Formato de data:", ["DD/MM/AAAA", "MM/DD/AAAA", "AAAA-MM-DD"])
+            st.number_input("Casas decimais:", min_value=0, max_value=4, value=2)
+            st.checkbox("Notificações sonoras", value=False)
+        
+        if st.button("💾 Salvar Preferências"):
+            st.success("Preferências salvas com sucesso!")
+    
+    with tab3:
+        st.markdown("### 🛠️ Configurações do Sistema")
+        
+        st.markdown("#### 💾 Backup de Dados")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📤 Fazer Backup", type="primary"):
+                st.success("Backup realizado com sucesso!")
+                st.info("Dados salvos em: backup_financeiro.json")
+        
+        with col2:
+            if st.button("🔄 Restaurar Backup"):
+                st.warning("Esta ação substituirá todos os dados atuais!")
+        
+        st.markdown("#### 🗑️ Limpeza de Dados")
+        st.warning("⚠️ Área de operações críticas")
+        
+        if st.button("🧹 Limpar Todos os Dados", type="secondary"):
+            st.session_state.transactions = []
+            st.session_state.goals = []
+            st.session_state.budgets = {category: 0 for category in financial_manager.categories}
+            st.success("Todos os dados foram limpos!")
+            st.rerun()
+
+# Rodapé
+st.markdown("---")
+st.markdown(
+    """
+    <div style='text-align: center; color: #666;'>
+        💜 <strong>Clara Ready</strong> - Plataforma de Gestão Financeira Inteligente<br>
+        Desenvolvido com ❤️ usando Streamlit
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+if __name__ == "__main__":
+    main()
