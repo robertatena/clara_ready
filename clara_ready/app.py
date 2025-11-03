@@ -1,1128 +1,1455 @@
-# app.py — CLARA • Sua Assistente Jurídica Pessoal
-# Versão completamente reformulada - Corrigido premium, layout e análise de contratos
-
-import os
-import re
-import json
-from datetime import datetime
-from typing import Dict, Any, List
 import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime, timedelta
+import json
+import time
+import io
+import base64
+import requests
+from typing import Dict, List, Tuple, Optional, Any
+import warnings
+import calendar
+from dateutil.relativedelta import relativedelta
+import uuid
+import hashlib
+import smtplib
+from email.mime.text import MimeText
+from email.mime.multipart import MimeMultipart
+import threading
+from collections import defaultdict, Counter
+import statistics
+import math
 
-# -------------------------------------------------
-# Configuração da Página
-# -------------------------------------------------
-APP_TITLE = "CLARA • Sua Assistente Jurídica Pessoal"
-VERSION = "v4.0"
+warnings.filterwarnings('ignore')
 
+# Configuração da página
 st.set_page_config(
-    page_title=APP_TITLE,
-    page_icon="⚖️",
+    page_title="Clara Ready - Plataforma Completa de Gestão Financeira",
+    page_icon="💜",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://github.com/clara-ready',
+        'Report a bug': "https://github.com/clara-ready/issues",
+        'About': "### Clara Ready v2.0\nSua plataforma inteligente de gestão financeira pessoal e empresarial."
+    }
 )
 
-# -------------------------------------------------
-# Sistema de Análise de Contratos Baseado no PDF
-# -------------------------------------------------
+# =============================================
+# SISTEMA DE SEGURANÇA E AUTENTICAÇÃO
+# =============================================
 
-CONTRACT_RULES = {
-    "imobiliario": [
-        {
-            "keyword": "indenização por benfeitorias necessárias",
-            "description": "Rendência ao direito de indenização por benfeitorias necessárias",
-            "risk_level": "alto",
-            "points": 10,
-            "legal_basis": "Contraria garantias mínimas do inquilino"
-        },
-        {
-            "keyword": "multa.*50%",
-            "description": "Multa desproporcional ao valor do contrato",
-            "risk_level": "medio",
-            "points": 5,
-            "legal_basis": "Ex: multa de 50% em rescisão antecipada"
-        },
-        {
-            "keyword": "renovação automática",
-            "description": "Renovação automática sem notificação",
-            "risk_level": "medio",
-            "points": 5,
-            "legal_basis": "Deve haver notificação prévia"
-        },
-        {
-            "keyword": "foro.*fora.*domicílio",
-            "description": "Cláusula que exige foro fora da residência do consumidor",
-            "risk_level": "alto",
-            "points": 10,
-            "legal_basis": "Contraria o CDC, que garante o foro de domicílio"
+class SecurityManager:
+    def __init__(self):
+        self.session_timeout = 3600  # 1 hora
+        
+    def hash_password(self, password: str) -> str:
+        """Hash seguro para senhas"""
+        return hashlib.sha256(password.encode()).hexdigest()
+    
+    def validate_session(self):
+        """Valida sessão do usuário"""
+        if 'user_authenticated' not in st.session_state:
+            st.session_state.user_authenticated = False
+        if 'last_activity' not in st.session_state:
+            st.session_state.last_activity = time.time()
+        
+        # Verificar timeout
+        if time.time() - st.session_state.last_activity > self.session_timeout:
+            st.session_state.user_authenticated = False
+            st.warning("Sessão expirada. Por favor, faça login novamente.")
+            return False
+        
+        st.session_state.last_activity = time.time()
+        return st.session_state.user_authenticated
+    
+    def login(self, username: str, password: str) -> bool:
+        """Sistema de login simplificado"""
+        # Em produção, isso seria conectado a um banco de dados seguro
+        valid_users = {
+            'admin': self.hash_password('admin123'),
+            'usuario': self.hash_password('senha123')
         }
-    ],
-    "prestacao_servicos": [
-        {
-            "keyword": "exclusão.*responsabilidade",
-            "description": "Exclusão total de responsabilidade do fornecedor",
-            "risk_level": "alto",
-            "points": 10,
-            "legal_basis": "Mesmo em caso de erro grave - Contraria o art. 39 do CDC"
-        },
-        {
-            "keyword": "fidelização.*multa",
-            "description": "Fidelização com multa sem contrapartida",
-            "risk_level": "medio",
-            "points": 5,
-            "legal_basis": "Sem benefícios claros para o contratante"
+        
+        if username in valid_users and valid_users[username] == self.hash_password(password):
+            st.session_state.user_authenticated = True
+            st.session_state.username = username
+            st.session_state.last_activity = time.time()
+            return True
+        return False
+
+# =============================================
+# SISTEMA DE NOTIFICAÇÕES
+# =============================================
+
+class NotificationSystem:
+    def __init__(self):
+        if 'notifications' not in st.session_state:
+            st.session_state.notifications = []
+    
+    def add_notification(self, title: str, message: str, level: str = "info"):
+        """Adiciona uma nova notificação"""
+        notification = {
+            'id': str(uuid.uuid4()),
+            'title': title,
+            'message': message,
+            'level': level,  # info, warning, error, success
+            'timestamp': datetime.now(),
+            'read': False
         }
-    ],
-    "financeiro": [
-        {
-            "keyword": "débito.*conta.*irrestrito",
-            "description": "Autorização irrestrita para débito em conta",
-            "risk_level": "alto",
-            "points": 10,
-            "legal_basis": "Sem limite claro ou autorização pontual"
-        },
-        {
-            "keyword": "venda.*casada",
-            "description": "Venda casada de produtos financeiros",
-            "risk_level": "alto",
-            "points": 10,
-            "legal_basis": "Ex: seguro obrigatório para obter crédito"
-        },
-        {
-            "keyword": "alteração.*unilateral.*taxa",
-            "description": "Alteração unilateral de taxas",
-            "risk_level": "medio",
-            "points": 5,
-            "legal_basis": "Sem aviso prévio e justificado"
+        st.session_state.notifications.append(notification)
+    
+    def get_unread_count(self) -> int:
+        """Retorna número de notificações não lidas"""
+        return sum(1 for n in st.session_state.notifications if not n['read'])
+    
+    def mark_all_read(self):
+        """Marca todas as notificações como lidas"""
+        for notification in st.session_state.notifications:
+            notification['read'] = True
+
+# =============================================
+# SISTEMA DE RELATÓRIOS AVANÇADOS
+# =============================================
+
+class AdvancedReporting:
+    def __init__(self, finance_manager):
+        self.finance_manager = finance_manager
+    
+    def generate_comprehensive_report(self, start_date: datetime, end_date: datetime) -> Dict:
+        """Gera relatório financeiro completo"""
+        transactions = self._get_transactions_in_period(start_date, end_date)
+        
+        report = {
+            'period': f"{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}",
+            'summary': self._generate_summary(transactions),
+            'category_analysis': self._analyze_categories(transactions),
+            'cash_flow_analysis': self._analyze_cash_flow(transactions),
+            'financial_health': self._assess_financial_health(transactions),
+            'recommendations': self._generate_recommendations(transactions)
         }
-    ],
-    "geral": [
-        {
-            "keyword": "renúncia.*direito",
-            "description": "Rendência antecipada a direitos garantidos por lei",
-            "risk_level": "alto",
-            "points": 10,
-            "legal_basis": "Ex: desistência de direito de arrependimento"
-        },
-        {
-            "keyword": "termo.*genérico",
-            "description": "Termos genéricos sem explicação acessível",
-            "risk_level": "medio",
-            "points": 5,
-            "legal_basis": "Linguagem jurídica rebuscada e pouco clara"
-        },
-        {
-            "keyword": "penalidade.*severa",
-            "description": "Penalidades severas apenas para uma parte",
-            "risk_level": "alto",
-            "points": 10,
-            "legal_basis": "Sem equilíbrio contratual"
-        },
-        {
-            "keyword": "aceito.*sem.*ler",
-            "description": "'Aceito sem ler' como prova de consentimento",
-            "risk_level": "medio",
-            "points": 5,
-            "legal_basis": "Contraria o dever de informação"
+        
+        return report
+    
+    def _get_transactions_in_period(self, start_date: datetime, end_date: datetime) -> List:
+        """Filtra transações por período"""
+        return [
+            t for t in st.session_state.transactions
+            if start_date <= t['date'] <= end_date
+        ]
+    
+    def _generate_summary(self, transactions: List) -> Dict:
+        """Gera resumo financeiro"""
+        income = sum(t['amount'] for t in transactions if t['type'] == 'Receita')
+        expenses = sum(t['amount'] for t in transactions if t['type'] == 'Despesa')
+        savings = income - expenses
+        savings_rate = (savings / income * 100) if income > 0 else 0
+        
+        return {
+            'total_income': income,
+            'total_expenses': expenses,
+            'net_savings': savings,
+            'savings_rate': savings_rate,
+            'transaction_count': len(transactions),
+            'average_transaction': income / len(transactions) if transactions else 0
         }
-    ]
-}
-
-def analyze_contract_comprehensive(text: str) -> Dict[str, Any]:
-    """Análise completa de contrato baseada nas regras do PDF"""
-    text_lower = text.lower()
-    findings = []
-    total_points = 0
     
-    # Analisar por categoria
-    for category, rules in CONTRACT_RULES.items():
-        for rule in rules:
-            if re.search(rule["keyword"], text_lower):
-                # Encontrar contexto
-                start = max(0, text_lower.find(rule["keyword"]) - 100)
-                end = min(len(text), text_lower.find(rule["keyword"]) + len(rule["keyword"]) + 100)
-                context = text[start:end].replace('\n', ' ')
-                
-                findings.append({
-                    "category": category,
-                    "description": rule["description"],
-                    "risk_level": rule["risk_level"],
-                    "points": rule["points"],
-                    "legal_basis": rule["legal_basis"],
-                    "context": context
-                })
-                total_points += rule["points"]
+    def _analyze_categories(self, transactions: List) -> Dict:
+        """Analisa gastos por categoria"""
+        expense_transactions = [t for t in transactions if t['type'] == 'Despesa']
+        category_totals = {}
+        
+        for transaction in expense_transactions:
+            category = transaction['category']
+            amount = transaction['amount']
+            category_totals[category] = category_totals.get(category, 0) + amount
+        
+        total_expenses = sum(category_totals.values())
+        category_percentages = {
+            category: (amount / total_expenses * 100) if total_expenses > 0 else 0
+            for category, amount in category_totals.items()
+        }
+        
+        return {
+            'category_totals': category_totals,
+            'category_percentages': category_percentages,
+            'top_categories': sorted(category_totals.items(), key=lambda x: x[1], reverse=True)[:5]
+        }
     
-    # Classificação de risco
-    if total_points == 0:
-        risk_category = "Verde (baixo risco)"
-    elif total_points <= 30:
-        risk_category = "Amarelo (médio risco)"
-    else:
-        risk_category = "Vermelho (alto risco)"
+    def _analyze_cash_flow(self, transactions: List) -> Dict:
+        """Analisa fluxo de caixa"""
+        daily_flow = defaultdict(float)
+        
+        for transaction in transactions:
+            date_key = transaction['date'].strftime('%Y-%m-%d')
+            amount = transaction['amount']
+            if transaction['type'] == 'Receita':
+                daily_flow[date_key] += amount
+            else:
+                daily_flow[date_key] -= amount
+        
+        return {
+            'daily_cash_flow': dict(daily_flow),
+            'positive_days': sum(1 for flow in daily_flow.values() if flow > 0),
+            'negative_days': sum(1 for flow in daily_flow.values() if flow < 0),
+            'average_daily_flow': statistics.mean(daily_flow.values()) if daily_flow else 0
+        }
     
-    return {
-        "total_points": total_points,
-        "risk_category": risk_category,
-        "findings": findings,
-        "total_findings": len(findings)
-    }
-
-def extract_text_from_pdf(pdf_file) -> str:
-    """Extrai texto de arquivos PDF"""
-    try:
-        import PyPDF2
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-        return text
-    except ImportError:
-        return f"[Conteúdo do PDF: {pdf_file.name}] - Módulo PyPDF2 não disponível"
-    except Exception as e:
-        return f"Erro na extração do PDF: {str(e)}"
-
-# -------------------------------------------------
-# Estilo Moderno + CLARA Identity
-# -------------------------------------------------
-st.markdown(
-    """
-    <style>
-    :root {
-        --clara-gold: #D4AF37;
-        --clara-blue: #ABDBF0;
-        --clara-dark: #0f172a;
-        --clara-gray: #475569;
-        --clara-light: #f8fafc;
-        --clara-success: #10b981;
-        --clara-warning: #f59e0b;
-        --clara-danger: #ef4444;
-    }
+    def _assess_financial_health(self, transactions: List) -> Dict:
+        """Avalia saúde financeira"""
+        summary = self._generate_summary(transactions)
+        category_analysis = self._analyze_categories(transactions)
+        
+        # Métricas de saúde financeira
+        savings_rate_score = min(summary['savings_rate'] / 20 * 100, 100)  # Meta: 20%
+        expense_diversity = len(category_analysis['category_totals']) / 8 * 100  # Meta: 8 categorias
+        consistency_score = self._calculate_consistency_score(transactions)
+        
+        overall_score = (savings_rate_score + expense_diversity + consistency_score) / 3
+        
+        return {
+            'overall_score': overall_score,
+            'savings_rate_score': savings_rate_score,
+            'expense_diversity_score': expense_diversity,
+            'consistency_score': consistency_score,
+            'grade': self._get_grade(overall_score)
+        }
     
-    .main-header {
-        background: linear-gradient(135deg, var(--clara-dark) 0%, #1e293b 100%);
-        color: white;
-        padding: 3rem 0;
-        text-align: center;
-        border-radius: 0 0 20px 20px;
-        margin-bottom: 2rem;
-    }
-    
-    .clara-badge {
-        background: var(--clara-gold);
-        color: var(--clara-dark);
-        padding: 0.5rem 1.5rem;
-        border-radius: 50px;
-        font-weight: 700;
-        font-size: 0.9rem;
-        display: inline-block;
-        margin-bottom: 1rem;
-    }
-    
-    .clara-card {
-        background: white;
-        border-radius: 16px;
-        padding: 2rem;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        border: 1px solid #e2e8f0;
-        margin: 1rem 0;
-        transition: transform 0.2s ease;
-        height: 100%;
-    }
-    
-    .clara-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 30px rgba(0,0,0,0.12);
-    }
-    
-    .service-card {
-        text-align: center;
-        padding: 1.5rem;
-        cursor: pointer;
-    }
-    
-    .service-icon {
-        font-size: 3rem;
-        margin-bottom: 1rem;
-    }
-    
-    .risk-low {
-        border-left: 4px solid var(--clara-success);
-        background: #f0fdf4;
-    }
-    
-    .risk-medium {
-        border-left: 4px solid var(--clara-warning);
-        background: #fffbeb;
-    }
-    
-    .risk-high {
-        border-left: 4px solid var(--clara-danger);
-        background: #fef2f2;
-    }
-    
-    .premium-card {
-        border: 2px solid var(--clara-gold);
-        position: relative;
-    }
-    
-    .premium-badge {
-        background: linear-gradient(135deg, #D4AF37, #F7EF8A);
-        color: var(--clara-dark);
-        padding: 0.3rem 1rem;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 0.8rem;
-        position: absolute;
-        top: -10px;
-        left: 50%;
-        transform: translateX(-50%);
-    }
-    
-    .step-container {
-        display: flex;
-        align-items: center;
-        margin: 1rem 0;
-        padding: 1.5rem;
-        background: var(--clara-light);
-        border-radius: 12px;
-        border-left: 4px solid var(--clara-gold);
-    }
-    
-    .step-number {
-        background: var(--clara-gold);
-        color: var(--clara-dark);
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        margin-right: 1rem;
-        font-size: 1.2rem;
-    }
-    
-    .user-profile {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 0.5rem 1rem;
-        background: var(--clara-light);
-        border-radius: 10px;
-        border: 1px solid #e2e8f0;
-    }
-    
-    .user-avatar {
-        width: 32px;
-        height: 32px;
-        border-radius: 50%;
-        background: var(--clara-gold);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--clara-dark);
-        font-weight: bold;
-    }
-    
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
-        margin: 2rem 0;
-    }
-    
-    .stat-card {
-        background: white;
-        border-radius: 12px;
-        padding: 1.5rem;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        border-left: 4px solid var(--clara-gold);
-        text-align: center;
-    }
-    
-    .footer {
-        text-align: center;
-        padding: 2rem 0;
-        margin-top: 3rem;
-        border-top: 1px solid #e2e8f0;
-        color: var(--clara-gray);
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# -------------------------------------------------
-# Estado da Sessão
-# -------------------------------------------------
-if "current_view" not in st.session_state:
-    st.session_state.current_view = "home"
-if "profile" not in st.session_state:
-    st.session_state.profile = {"nome": "", "email": "", "cel": ""}
-if "premium" not in st.session_state:
-    st.session_state.premium = False
-if "free_uses" not in st.session_state:
-    st.session_state.free_uses = 3
-if "active_service" not in st.session_state:
-    st.session_state.active_service = None
-if "user_logged_in" not in st.session_state:
-    st.session_state.user_logged_in = False
-
-# -------------------------------------------------
-# Serviços Atualizados
-# -------------------------------------------------
-SERVICES = {
-    "cancelamento_assinaturas": {
-        "title": "📝 Cancelamento de Assinaturas",
-        "icon": "📝",
-        "description": "Cancele academias, apps, TV e serviços com base no Código de Defesa do Consumidor",
-        "category": "Consumidor",
-        "color": "#D4AF37"
-    },
-    "cobranca_indevida": {
-        "title": "💳 Cobrança Indevida - Passo a Passo",
-        "icon": "💳",
-        "description": "Guia completo para contestar cobranças não autorizadas",
-        "category": "Financeiro",
-        "color": "#EF4444"
-    },
-    "analise_contratos": {
-        "title": "📄 Análise de Contratos Inteligente",
-        "icon": "📄",
-        "description": "Identifique cláusulas abusivas conforme a legislação brasileira",
-        "category": "Jurídico",
-        "color": "#10B981"
-    },
-    "juros_abusivos": {
-        "title": "📊 Juros Abusivos & CET",
-        "icon": "📊",
-        "description": "Calcule custos reais e dispute juros excessivos",
-        "category": "Financeiro",
-        "color": "#F59E0B"
-    },
-    "direito_arrependimento": {
-        "title": "🔄 Direito de Arrependimento",
-        "icon": "🔄",
-        "description": "Exercite seu direito de arrependimento em compras online",
-        "category": "Consumidor",
-        "color": "#8B5CF6"
-    },
-    "problemas_entregas": {
-        "title": "🚚 Problemas com Entregas",
-        "icon": "🚚",
-        "description": "Resolva atrasos, extravios e problemas com entregas",
-        "category": "Consumidor",
-        "color": "#06B6D4"
-    }
-}
-
-# -------------------------------------------------
-# Componentes de Interface
-# -------------------------------------------------
-def render_header():
-    """Cabeçalho com navegação"""
-    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1.5])
-    
-    with col1:
-        st.markdown("""
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <div>
-                <div style="font-size: 1.8rem; font-weight: 700; color: #D4AF37; margin: 0;">CLARA LAW</div>
-                <div style="font-size: 0.8rem; color: #475569; margin: 0;">Inteligência para um mundo mais claro</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        if st.button("🏠 **Início**", use_container_width=True, key="nav_home"):
-            st.session_state.current_view = "home"
-            st.rerun()
-    
-    with col3:
-        if st.button("🛡️ **Serviços**", use_container_width=True, key="nav_services"):
-            st.session_state.current_view = "services"
-            st.rerun()
-    
-    with col4:
-        if st.button("⭐ **Premium**", use_container_width=True, key="nav_premium"):
-            st.session_state.current_view = "premium"
-            st.rerun()
-    
-    with col5:
-        if st.session_state.user_logged_in:
-            user_name = st.session_state.profile.get('nome', 'Usuário')
-            user_initials = user_name[:2].upper() if user_name else "US"
-            
-            st.markdown(f"""
-            <div class="user-profile">
-                <div class="user-avatar">{user_initials}</div>
-                <div>
-                    <div style="font-weight: 600; font-size: 0.9rem;">{user_name}</div>
-                    <div style="font-size: 0.7rem; color: #475569;">
-                        {'⭐ Premium' if st.session_state.premium else f'🔓 {st.session_state.free_uses} análises'}
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    def _calculate_consistency_score(self, transactions: List) -> float:
+        """Calcula score de consistência financeira"""
+        if len(transactions) < 10:
+            return 50.0  # Score base para poucas transações
+        
+        # Analisar consistência de receitas
+        income_transactions = [t for t in transactions if t['type'] == 'Receita']
+        if len(income_transactions) > 1:
+            income_amounts = [t['amount'] for t in income_transactions]
+            income_std = statistics.stdev(income_amounts)
+            income_mean = statistics.mean(income_amounts)
+            income_cv = (income_std / income_mean * 100) if income_mean > 0 else 100
+            income_consistency = max(0, 100 - income_cv)
         else:
-            if st.button("🔐 **Entrar**", use_container_width=True, key="nav_login"):
-                st.session_state.current_view = "login"
-                st.rerun()
+            income_consistency = 50
+        
+        return income_consistency
+    
+    def _get_grade(self, score: float) -> str:
+        """Converte score em nota"""
+        if score >= 90: return "A+"
+        elif score >= 80: return "A"
+        elif score >= 70: return "B"
+        elif score >= 60: return "C"
+        elif score >= 50: return "D"
+        else: return "F"
+    
+    def _generate_recommendations(self, transactions: List) -> List[str]:
+        """Gera recomendações personalizadas"""
+        recommendations = []
+        summary = self._generate_summary(transactions)
+        category_analysis = self._analyze_categories(transactions)
+        financial_health = self._assess_financial_health(transactions)
+        
+        # Recomendações baseadas em savings rate
+        if summary['savings_rate'] < 10:
+            recommendations.append("💡 **Aumente sua taxa de economia**: Tente economizar pelo menos 20% da sua renda")
+        elif summary['savings_rate'] > 30:
+            recommendations.append("✅ **Excelente taxa de economia**: Considere investir o excedente")
+        
+        # Recomendações baseadas em diversidade de gastos
+        if len(category_analysis['category_totals']) < 5:
+            recommendations.append("📊 **Diversifique seus gastos**: Suas despesas estão concentradas em poucas categorias")
+        
+        # Recomendações baseadas em saúde financeira
+        if financial_health['overall_score'] < 60:
+            recommendations.append("⚕️ **Melhore sua saúde financeira**: Foque em consistência e diversificação")
+        
+        # Recomendações específicas por categoria
+        for category, percentage in category_analysis['category_percentages'].items():
+            if percentage > 40:
+                recommendations.append(f"🎯 **Reduza gastos com {category}**: Está consumindo {percentage:.1f}% do seu orçamento")
+        
+        return recommendations
 
-def render_hero():
-    """Seção hero principal"""
+# =============================================
+# SISTEMA DE INVESTIMENTOS
+# =============================================
+
+class InvestmentManager:
+    def __init__(self):
+        if 'investments' not in st.session_state:
+            st.session_state.investments = []
+        if 'investment_goals' not in st.session_state:
+            st.session_state.investment_goals = []
+    
+    def add_investment(self, name: str, type: str, amount: float, 
+                      expected_return: float, risk_level: str, date: datetime):
+        """Adiciona um novo investimento"""
+        investment = {
+            'id': str(uuid.uuid4()),
+            'name': name,
+            'type': type,
+            'amount': amount,
+            'current_value': amount,
+            'expected_return': expected_return,
+            'risk_level': risk_level,
+            'date_added': date,
+            'last_updated': datetime.now()
+        }
+        st.session_state.investments.append(investment)
+    
+    def update_investment_value(self, investment_id: str, new_value: float):
+        """Atualiza valor do investimento"""
+        for investment in st.session_state.investments:
+            if investment['id'] == investment_id:
+                investment['current_value'] = new_value
+                investment['last_updated'] = datetime.now()
+                break
+    
+    def get_portfolio_summary(self) -> Dict:
+        """Retorna resumo da carteira de investimentos"""
+        if not st.session_state.investments:
+            return {}
+        
+        total_invested = sum(inv['amount'] for inv in st.session_state.investments)
+        total_current = sum(inv['current_value'] for inv in st.session_state.investments)
+        total_return = total_current - total_invested
+        total_return_percentage = (total_return / total_invested * 100) if total_invested > 0 else 0
+        
+        # Análise por tipo
+        type_analysis = {}
+        for investment in st.session_state.investments:
+            inv_type = investment['type']
+            if inv_type not in type_analysis:
+                type_analysis[inv_type] = {
+                    'total_invested': 0,
+                    'total_current': 0,
+                    'count': 0
+                }
+            type_analysis[inv_type]['total_invested'] += investment['amount']
+            type_analysis[inv_type]['total_current'] += investment['current_value']
+            type_analysis[inv_type]['count'] += 1
+        
+        # Análise por risco
+        risk_analysis = {}
+        for investment in st.session_state.investments:
+            risk = investment['risk_level']
+            if risk not in risk_analysis:
+                risk_analysis[risk] = {
+                    'total_invested': 0,
+                    'total_current': 0,
+                    'count': 0
+                }
+            risk_analysis[risk]['total_invested'] += investment['amount']
+            risk_analysis[risk]['total_current'] += investment['current_value']
+            risk_analysis[risk]['count'] += 1
+        
+        return {
+            'total_invested': total_invested,
+            'total_current_value': total_current,
+            'total_return': total_return,
+            'total_return_percentage': total_return_percentage,
+            'type_analysis': type_analysis,
+            'risk_analysis': risk_analysis,
+            'investment_count': len(st.session_state.investments)
+        }
+
+# =============================================
+# SISTEMA DE METAS AVANÇADAS
+# =============================================
+
+class AdvancedGoalManager:
+    def __init__(self, finance_manager):
+        self.finance_manager = finance_manager
+    
+    def calculate_goal_progress(self, goal: Dict) -> Dict:
+        """Calcula progresso detalhado da meta"""
+        target_amount = goal['target_amount']
+        current_amount = goal['current_amount']
+        deadline = goal['deadline']
+        created_at = goal['created_at']
+        
+        # Progresso atual
+        current_progress = (current_amount / target_amount * 100) if target_amount > 0 else 0
+        
+        # Progresso esperado baseado no tempo
+        total_days = (deadline - created_at.date()).days
+        days_passed = (datetime.now().date() - created_at.date()).days
+        expected_progress = (days_passed / total_days * 100) if total_days > 0 else 0
+        
+        # Quantia necessária por mês
+        remaining_amount = target_amount - current_amount
+        months_remaining = max(1, (deadline - datetime.now().date()).days // 30)
+        monthly_savings_needed = remaining_amount / months_remaining
+        
+        # Status da meta
+        if current_progress >= 100:
+            status = "Concluída"
+        elif current_progress >= expected_progress:
+            status = "No Prazo"
+        else:
+            status = "Atrasada"
+        
+        return {
+            'current_progress': current_progress,
+            'expected_progress': expected_progress,
+            'remaining_amount': remaining_amount,
+            'monthly_savings_needed': monthly_savings_needed,
+            'status': status,
+            'days_remaining': (deadline - datetime.now().date()).days,
+            'on_track': current_progress >= expected_progress
+        }
+
+# =============================================
+# GERENCIADOR FINANCEIRO PRINCIPAL (EXPANDIDO)
+# =============================================
+
+class FinancialManager:
+    def __init__(self):
+        self.categories = {
+            'Receitas': ['Salário', 'Freelance', 'Investimentos', 'Aluguel', 'Bônus', 'Dividendos', 'Outros'],
+            'Despesas': ['Moradia', 'Alimentação', 'Transporte', 'Saúde', 'Educação', 
+                        'Lazer', 'Vestuário', 'Serviços', 'Impostos', 'Seguros', 'Outros']
+        }
+        
+        # Inicializar session states
+        self._initialize_session_states()
+        
+        # Subsistemas
+        self.security = SecurityManager()
+        self.notifications = NotificationSystem()
+        self.reporting = AdvancedReporting(self)
+        self.investments = InvestmentManager()
+        self.goal_manager = AdvancedGoalManager(self)
+    
+    def _initialize_session_states(self):
+        """Inicializa todos os session states necessários"""
+        defaults = {
+            'transactions': [],
+            'financial_goals': [],
+            'budgets': {},
+            'recurring_transactions': [],
+            'financial_plans': [],
+            'user_preferences': {
+                'currency': 'BRL',
+                'savings_target': 20,
+                'notifications': True,
+                'theme': 'light'
+            }
+        }
+        
+        for key, value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
+    
+    def add_transaction(self, amount: float, category: str, description: str, 
+                       transaction_type: str, date: datetime, recurring: bool = False,
+                       recurring_frequency: str = None) -> Dict:
+        """Adiciona uma nova transação financeira com suporte a recorrência"""
+        transaction = {
+            'id': str(uuid.uuid4()),
+            'amount': amount,
+            'category': category,
+            'description': description,
+            'type': transaction_type,
+            'date': date,
+            'created_at': datetime.now(),
+            'recurring': recurring,
+            'recurring_frequency': recurring_frequency
+        }
+        
+        st.session_state.transactions.append(transaction)
+        
+        # Adicionar notificação
+        self.notifications.add_notification(
+            "Nova Transação",
+            f"{transaction_type} de R$ {amount:,.2f} em {category}",
+            "info"
+        )
+        
+        return transaction
+    
+    def add_recurring_transaction(self, amount: float, category: str, description: str,
+                                transaction_type: str, start_date: datetime, 
+                                frequency: str, end_date: datetime = None):
+        """Adiciona transação recorrente"""
+        recurring_transaction = {
+            'id': str(uuid.uuid4()),
+            'amount': amount,
+            'category': category,
+            'description': description,
+            'type': transaction_type,
+            'start_date': start_date,
+            'frequency': frequency,  # daily, weekly, monthly, yearly
+            'end_date': end_date,
+            'created_at': datetime.now()
+        }
+        
+        st.session_state.recurring_transactions.append(recurring_transaction)
+        
+        # Gerar transações baseadas na recorrência
+        self._generate_recurring_transactions()
+    
+    def _generate_recurring_transactions(self):
+        """Gera transações baseadas nas regras de recorrência"""
+        today = datetime.now().date()
+        
+        for recurring in st.session_state.recurring_transactions:
+            last_generated = recurring.get('last_generated')
+            
+            if not last_generated or self._should_generate_transaction(recurring, last_generated, today):
+                # Criar nova transação
+                new_transaction = {
+                    'id': str(uuid.uuid4()),
+                    'amount': recurring['amount'],
+                    'category': recurring['category'],
+                    'description': recurring['description'],
+                    'type': recurring['type'],
+                    'date': datetime.now(),
+                    'created_at': datetime.now(),
+                    'recurring': True,
+                    'recurring_id': recurring['id']
+                }
+                
+                st.session_state.transactions.append(new_transaction)
+                recurring['last_generated'] = today
+    
+    def _should_generate_transaction(self, recurring: Dict, last_generated: datetime, today: datetime) -> bool:
+        """Verifica se deve gerar nova transação baseada na frequência"""
+        frequency = recurring['frequency']
+        
+        if frequency == 'daily':
+            return today > last_generated
+        elif frequency == 'weekly':
+            return (today - last_generated).days >= 7
+        elif frequency == 'monthly':
+            return today.month != last_generated.month or today.year != last_generated.year
+        elif frequency == 'yearly':
+            return today.year != last_generated.year
+        
+        return False
+    
+    def get_balance(self) -> float:
+        """Calcula o saldo total"""
+        income = sum(t['amount'] for t in st.session_state.transactions if t['type'] == 'Receita')
+        expenses = sum(t['amount'] for t in st.session_state.transactions if t['type'] == 'Despesa')
+        return income - expenses
+    
+    def get_monthly_summary(self, year: int = None, month: int = None) -> Dict:
+        """Retorna resumo mensal detalhado"""
+        if year is None:
+            year = datetime.now().year
+        if month is None:
+            month = datetime.now().month
+        
+        monthly_transactions = [
+            t for t in st.session_state.transactions
+            if t['date'].year == year and t['date'].month == month
+        ]
+        
+        income = sum(t['amount'] for t in monthly_transactions if t['type'] == 'Receita')
+        expenses = sum(t['amount'] for t in monthly_transactions if t['type'] == 'Despesa')
+        savings = income - expenses
+        savings_rate = (savings / income * 100) if income > 0 else 0
+        
+        # Análise por categoria
+        expense_by_category = {}
+        for transaction in monthly_transactions:
+            if transaction['type'] == 'Despesa':
+                category = transaction['category']
+                expense_by_category[category] = expense_by_category.get(category, 0) + transaction['amount']
+        
+        # Comparação com mês anterior
+        prev_month = month - 1 if month > 1 else 12
+        prev_year = year if month > 1 else year - 1
+        prev_summary = self.get_monthly_summary(prev_year, prev_month)
+        
+        return {
+            'income': income,
+            'expenses': expenses,
+            'savings': savings,
+            'savings_rate': savings_rate,
+            'transaction_count': len(monthly_transactions),
+            'expense_by_category': expense_by_category,
+            'comparison': {
+                'income_change': income - prev_summary['income'],
+                'expense_change': expenses - prev_summary['expenses'],
+                'savings_change': savings - prev_summary['savings']
+            }
+        }
+    
+    def get_yearly_summary(self, year: int = None) -> Dict:
+        """Retorna resumo anual"""
+        if year is None:
+            year = datetime.now().year
+        
+        yearly_data = {}
+        for month in range(1, 13):
+            yearly_data[month] = self.get_monthly_summary(year, month)
+        
+        total_income = sum(data['income'] for data in yearly_data.values())
+        total_expenses = sum(data['expenses'] for data in yearly_data.values())
+        total_savings = total_income - total_expenses
+        
+        return {
+            'yearly_data': yearly_data,
+            'total_income': total_income,
+            'total_expenses': total_expenses,
+            'total_savings': total_savings,
+            'average_savings_rate': (total_savings / total_income * 100) if total_income > 0 else 0,
+            'best_month': max(yearly_data.items(), key=lambda x: x[1]['savings']),
+            'worst_month': min(yearly_data.items(), key=lambda x: x[1]['savings'])
+        }
+    
+    def set_budget(self, category: str, amount: float, period: str = 'monthly'):
+        """Define orçamento para uma categoria"""
+        st.session_state.budgets[category] = {
+            'amount': amount,
+            'period': period,
+            'set_at': datetime.now()
+        }
+    
+    def get_budget_status(self) -> Dict:
+        """Retorna status detalhado dos orçamentos"""
+        current_month = datetime.now().month
+        current_year = datetime.now().year
+        
+        budget_status = {}
+        for category, budget in st.session_state.budgets.items():
+            spent = sum(
+                t['amount'] for t in st.session_state.transactions 
+                if t['category'] == category and t['type'] == 'Despesa'
+                and t['date'].month == current_month and t['date'].year == current_year
+            )
+            
+            budget_amount = budget['amount']
+            remaining = budget_amount - spent
+            percentage = (spent / budget_amount * 100) if budget_amount > 0 else 0
+            
+            budget_status[category] = {
+                'budget': budget_amount,
+                'spent': spent,
+                'remaining': remaining,
+                'percentage': percentage,
+                'status': 'within_budget' if percentage <= 100 else 'over_budget',
+                'over_amount': max(0, spent - budget_amount)
+            }
+        
+        return budget_status
+    
+    def add_financial_goal(self, goal: str, target_amount: float, deadline: datetime,
+                          priority: str = 'medium', category: str = 'Outros'):
+        """Adiciona uma meta financeira detalhada"""
+        goal_data = {
+            'id': str(uuid.uuid4()),
+            'goal': goal,
+            'target_amount': target_amount,
+            'current_amount': 0,
+            'deadline': deadline,
+            'priority': priority,  # low, medium, high
+            'category': category,
+            'created_at': datetime.now(),
+            'completed': False,
+            'milestones': []
+        }
+        st.session_state.financial_goals.append(goal_data)
+        return goal_data
+    
+    def add_milestone_to_goal(self, goal_id: str, milestone: str, target_amount: float):
+        """Adiciona marco a uma meta"""
+        for goal in st.session_state.financial_goals:
+            if goal['id'] == goal_id:
+                milestone_data = {
+                    'id': str(uuid.uuid4()),
+                    'milestone': milestone,
+                    'target_amount': target_amount,
+                    'completed': False
+                }
+                goal['milestones'].append(milestone_data)
+                break
+    
+    def update_goal_progress(self, goal_id: str, amount: float):
+        """Atualiza progresso da meta"""
+        for goal in st.session_state.financial_goals:
+            if goal['id'] == goal_id:
+                goal['current_amount'] += amount
+                
+                # Verificar se completou a meta
+                if goal['current_amount'] >= goal['target_amount']:
+                    goal['completed'] = True
+                    goal['completed_at'] = datetime.now()
+                    
+                    self.notifications.add_notification(
+                        "🎉 Meta Concluída!",
+                        f"Parabéns! Você alcançou a meta: {goal['goal']}",
+                        "success"
+                    )
+                
+                break
+
+# =============================================
+# COMPONENTES DE UI AVANÇADOS
+# =============================================
+
+class AdvancedUIComponents:
+    @staticmethod
+    def create_financial_card(title: str, value: Any, change: Any = None, 
+                            change_label: str = "", icon: str = "💰"):
+        """Cria card financeiro avançado"""
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.metric(
+                label=title,
+                value=value,
+                delta=change,
+                delta_color="normal" if change is None else ("inverse" if change < 0 else "normal")
+            )
+        
+        with col2:
+            st.write(f"<div style='font-size: 2rem; text-align: center;'>{icon}</div>", 
+                    unsafe_allow_html=True)
+        
+        if change_label:
+            st.caption(change_label)
+    
+    @staticmethod
+    def create_progress_dashboard(finance_manager):
+        """Cria dashboard de progresso completo"""
+        st.markdown("### 📊 Dashboard de Progresso")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            balance = finance_manager.get_balance()
+            AdvancedUIComponents.create_financial_card(
+                "Saldo Total", 
+                f"R$ {balance:,.2f}", 
+                icon="💼"
+            )
+        
+        with col2:
+            monthly = finance_manager.get_monthly_summary()
+            AdvancedUIComponents.create_financial_card(
+                "Economias do Mês", 
+                f"R$ {monthly['savings']:,.2f}",
+                monthly['comparison']['savings_change'],
+                icon="📈"
+            )
+        
+        with col3:
+            budget_status = finance_manager.get_budget_status()
+            within_budget = sum(1 for status in budget_status.values() 
+                              if status['status'] == 'within_budget')
+            total_budgets = len(budget_status)
+            budget_percentage = (within_budget / total_budgets * 100) if total_budgets > 0 else 0
+            
+            AdvancedUIComponents.create_financial_card(
+                "Orçamentos no Verde",
+                f"{budget_percentage:.1f}%",
+                icon="✅"
+            )
+        
+        with col4:
+            goals = [g for g in st.session_state.financial_goals if not g['completed']]
+            if goals:
+                completed_goals = sum(1 for g in goals if g['completed'])
+                goals_percentage = (completed_goals / len(goals) * 100)
+                AdvancedUIComponents.create_financial_card(
+                    "Metas em Progresso",
+                    f"{goals_percentage:.1f}%",
+                    icon="🎯"
+                )
+            else:
+                AdvancedUIComponents.create_financial_card(
+                    "Metas",
+                    "0%",
+                    icon="🎯"
+                )
+
+# =============================================
+# APLICAÇÃO PRINCIPAL
+# =============================================
+
+def main():
+    # Inicializar gerenciador financeiro
+    finance_manager = FinancialManager()
+    
+    # Verificar autenticação
+    if not finance_manager.security.validate_session():
+        show_login_page(finance_manager.security)
+        return
+    
+    # CSS personalizado avançado
     st.markdown("""
-    <div class="main-header">
-        <div class="clara-badge">⚖️ ASSISTENTE JURÍDICA PESSOAL</div>
-        <h1 style="font-size: 3.5rem; font-weight: 800; margin: 1rem 0; line-height: 1.1;">
-            Resolva problemas jurídicos<br>sem advogado caro
-        </h1>
-        <p style="font-size: 1.3rem; opacity: 0.9; margin-bottom: 2rem; line-height: 1.6;">
-            Use a inteligência da CLARA para cancelar assinaturas, disputar cobranças,<br>
-            analisar contratos e muito mais. Rápido, simples e eficaz.
-        </p>
-    </div>
+    <style>
+        .main-header {
+            font-size: 3.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-align: center;
+            margin-bottom: 1rem;
+            font-weight: bold;
+        }
+        .metric-card {
+            background: white;
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            border-left: 5px solid #6A0DAD;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+        .positive {
+            color: #00C851;
+            font-weight: bold;
+        }
+        .negative {
+            color: #ff4444;
+            font-weight: bold;
+        }
+        .notification-badge {
+            background-color: #ff4444;
+            color: white;
+            border-radius: 50%;
+            padding: 2px 6px;
+            font-size: 0.8rem;
+            margin-left: 5px;
+        }
+    </style>
     """, unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🚀 Começar Agora", use_container_width=True, type="primary", key="hero_cta"):
-            st.session_state.current_view = "services"
-            st.rerun()
+    # Header principal
+    st.markdown('<div class="main-header">💜 Clara Ready</div>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align: center; font-size: 1.3rem; color: #666;">Sua plataforma inteligente de gestão financeira pessoal e empresarial</p>', unsafe_allow_html=True)
+    
+    # Barra superior com notificações
+    show_top_navigation(finance_manager)
+    
+    # Sidebar principal
+    with st.sidebar:
+        show_sidebar(finance_manager)
+    
+    # Conteúdo principal baseado na seleção do menu
+    menu_option = st.session_state.get('selected_menu', '📊 Dashboard Principal')
+    
+    if menu_option == "📊 Dashboard Principal":
+        show_advanced_dashboard(finance_manager)
+    elif menu_option == "💸 Gestão de Transações":
+        show_transaction_management(finance_manager)
+    elif menu_option == "📈 Análises Detalhadas":
+        show_detailed_analysis(finance_manager)
+    elif menu_option == "🎯 Metas Financeiras":
+        show_advanced_goals(finance_manager)
+    elif menu_option == "💰 Orçamentos":
+        show_budget_management(finance_manager)
+    elif menu_option == "📊 Relatórios":
+        show_reports(finance_manager)
+    elif menu_option == "💼 Investimentos":
+        show_investments(finance_manager)
+    elif menu_option == "🔮 Previsões":
+        show_advanced_forecasts(finance_manager)
+    elif menu_option == "⚙️ Configurações":
+        show_advanced_settings(finance_manager)
 
-def render_stats():
-    """Estatísticas da plataforma"""
-    st.markdown('<div class="stats-grid">', unsafe_allow_html=True)
+def show_login_page(security_manager):
+    """Página de login"""
+    st.markdown("""
+    <style>
+        .login-container {
+            max-width: 400px;
+            margin: 100px auto;
+            padding: 2rem;
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            background: white;
+        }
+    </style>
+    """, unsafe_allow_html=True)
     
-    stats = [
-        {"value": "2.847", "label": "Casos Resolvidos"},
-        {"value": "R$ 1.2M", "label": "Economizados"},
-        {"value": "98%", "label": "Taxa de Sucesso"},
-        {"value": "4.9★", "label": "Avaliação"}
-    ]
+    st.markdown('<div class="login-container">', unsafe_allow_html=True)
     
-    for stat in stats:
-        st.markdown(f"""
-        <div class="stat-card">
-            <div style="font-size: 2rem; font-weight: 700; color: #0f172a; margin: 0.5rem 0;">{stat['value']}</div>
-            <div style="color: #475569; font-size: 0.9rem;">{stat['label']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown('<h2 style="text-align: center; color: #6A0DAD;">🔐 Login</h2>', unsafe_allow_html=True)
+    
+    with st.form("login_form"):
+        username = st.text_input("👤 Usuário")
+        password = st.text_input("🔒 Senha", type="password")
+        
+        if st.form_submit_button("🚀 Entrar"):
+            if security_manager.login(username, password):
+                st.success("✅ Login realizado com sucesso!")
+                st.rerun()
+            else:
+                st.error("❌ Usuário ou senha incorretos")
+    
+    st.markdown("""
+    <div style="text-align: center; margin-top: 2rem;">
+        <p><strong>Credenciais de demonstração:</strong></p>
+        <p>👤 Usuário: <code>admin</code></p>
+        <p>🔒 Senha: <code>admin123</code></p>
+    </div>
+    """, unsafe_allow_html=True)
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-def render_services_grid():
-    """Grid de serviços"""
-    st.markdown("""
-    <div style='text-align: center; margin: 3rem 0;'>
-        <h2>Como a CLARA pode te ajudar hoje?</h2>
-        <p style="color: #475569;">Escolha o serviço que você precisa:</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Organizar serviços em linhas de 3
-    services_list = list(SERVICES.items())
-    
-    for i in range(0, len(services_list), 3):
-        cols = st.columns(3)
-        for j, (service_id, service) in enumerate(services_list[i:i+3]):
-            with cols[j]:
-                st.markdown(f"""
-                <div class="clara-card service-card" 
-                     style="border-top: 4px solid {service['color']}; cursor: pointer;"
-                     onclick="this.nextElementSibling.click()">
-                    <div class="service-icon">{service['icon']}</div>
-                    <h3 style="margin: 1rem 0; color: #0f172a;">{service['title']}</h3>
-                    <p style="color: #475569; margin-bottom: 1.5rem;">{service['description']}</p>
-                    <small style="color: {service['color']}; font-weight: 600;">{service['category']}</small>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if st.button(f"Usar {service['title'].split(' ')[0]}", 
-                           key=f"btn_{service_id}", use_container_width=True):
-                    if not st.session_state.user_logged_in and st.session_state.free_uses <= 0:
-                        st.session_state.current_view = "premium"
-                        st.rerun()
-                    else:
-                        st.session_state.active_service = service_id
-                        st.session_state.current_view = "service_detail"
-                        st.rerun()
-
-def render_login():
-    """Página de login"""
-    st.markdown("""
-    <div style="max-width: 500px; margin: 0 auto; text-align: center;">
-        <h1 style="margin-bottom: 2rem;">Acesse sua conta CLARA</h1>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    tab1, tab2 = st.tabs(["🔐 Entrar", "📝 Cadastrar"])
-    
-    with tab1:
-        with st.form("login_form"):
-            email = st.text_input("E-mail")
-            senha = st.text_input("Senha", type="password")
-            
-            if st.form_submit_button("Entrar na Minha Conta", use_container_width=True, type="primary"):
-                if email and senha:
-                    st.session_state.user_logged_in = True
-                    st.session_state.profile = {
-                        "nome": "João Silva",
-                        "email": email,
-                        "cel": "(11) 99999-9999"
-                    }
-                    st.session_state.current_view = "home"
-                    st.success("✅ Login realizado com sucesso!")
-                    st.rerun()
-                else:
-                    st.error("Por favor, preencha todos os campos")
-    
-    with tab2:
-        with st.form("register_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                nome = st.text_input("Nome completo")
-            with col2:
-                cel = st.text_input("Celular")
-            
-            email = st.text_input("E-mail")
-            senha = st.text_input("Senha", type="password")
-            confirmar_senha = st.text_input("Confirmar senha", type="password")
-            
-            if st.form_submit_button("Criar Minha Conta", use_container_width=True, type="primary"):
-                if nome and email and cel and senha and confirmar_senha:
-                    if senha == confirmar_senha:
-                        st.session_state.user_logged_in = True
-                        st.session_state.profile = {
-                            "nome": nome,
-                            "email": email,
-                            "cel": cel
-                        }
-                        st.session_state.current_view = "home"
-                        st.success("✅ Conta criada com sucesso!")
-                        st.rerun()
-                    else:
-                        st.error("As senhas não coincidem")
-                else:
-                    st.error("Por favor, preencha todos os campos")
-    
-    st.markdown("---")
-    st.markdown("""
-    <div style="text-align: center;">
-        <p>💡 <strong>Dica:</strong> Você pode testar 3 serviços gratuitamente sem cadastro!</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if st.button("➡️ Experimentar sem Cadastro", use_container_width=True):
-        st.session_state.current_view = "services"
-        st.rerun()
-
-def render_premium():
-    """Página premium corrigida"""
-    st.markdown("""
-    <div style="text-align: center; margin-bottom: 3rem;">
-        <h1>⭐ CLARA Premium</h1>
-        <p style="font-size: 1.2rem; color: #475569;">Desbloqueie todo o potencial da sua assistente jurídica</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    col1, col2 = st.columns([1, 1])
+def show_top_navigation(finance_manager):
+    """Barra de navegação superior"""
+    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
     
     with col1:
-        st.markdown("""
-        <div class="clara-card">
-            <h3 style="text-align: center;">🔓 Plano Gratuito</h3>
-            <div style="text-align: center; margin: 2rem 0;">
-                <div style="font-size: 2.5rem; font-weight: 700; color: #0f172a;">R$ 0</div>
-                <div style="color: #475569;">para sempre</div>
-            </div>
-            <div style="text-align: left;">
-                <p>✓ 3 análises gratuitas</p>
-                <p>✓ Serviços básicos</p>
-                <p>✓ Modelos padrão</p>
-                <p>✓ Suporte por e-mail</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.write(f"👋 Bem-vindo(a), **{st.session_state.get('username', 'Usuário')}**!")
     
     with col2:
-        st.markdown("""
-        <div class="clara-card premium-card">
-            <div class="premium-badge">MAIS POPULAR</div>
-            <h3 style="text-align: center;">⭐ CLARA Premium</h3>
-            <div style="text-align: center; margin: 2rem 0;">
-                <div style="font-size: 2.5rem; font-weight: 700; color: #D4AF37;">R$ 9,90</div>
-                <div style="color: #475569;">por mês • Cancele quando quiser</div>
-            </div>
-            <div style="text-align: left;">
-                <p><strong>✓ Análises ilimitadas</strong></p>
-                <p><strong>✓ Todos os serviços disponíveis</strong></p>
-                <p>✓ Modelos personalizados</p>
-                <p>✓ Análise de contratos avançada</p>
-                <p>✓ Suporte prioritário</p>
-                <p>✓ Calculadora de CET completa</p>
-                <p>✓ Atualizações constantes</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # Notificações
+        unread_count = finance_manager.notifications.get_unread_count()
+        notification_text = "🔔 Notificações"
+        if unread_count > 0:
+            notification_text += f" <span class='notification-badge'>{unread_count}</span>"
+        
+        if st.button(notification_text, use_container_width=True):
+            show_notifications(finance_manager.notifications)
     
-    st.markdown("---")
+    with col3:
+        # Saldo rápido
+        balance = finance_manager.get_balance()
+        balance_color = "positive" if balance >= 0 else "negative"
+        st.markdown(f"**Saldo:** <span class='{balance_color}'>R$ {balance:,.2f}</span>", 
+                   unsafe_allow_html=True)
     
-    st.markdown("""
-    <div style="text-align: center; margin: 2rem 0;">
-        <h3>💎 Pronto para desbloquear todo o potencial da CLARA?</h3>
-        <p style="color: #475569;">Mais de 2.000 usuários já confiam na CLARA Premium</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🔄 Assinar CLARA Premium - R$ 9,90/mês", 
-                   use_container_width=True, type="primary", key="premium_btn"):
-            st.session_state.premium = True
-            st.session_state.free_uses = 999
-            st.session_state.user_logged_in = True
-            st.success("🎉 Parabéns! Você agora é um usuário CLARA Premium!")
-            st.balloons()
+    with col4:
+        if st.button("🚪 Sair", use_container_width=True):
+            st.session_state.user_authenticated = False
             st.rerun()
 
-def render_service_detail():
-    """Detalhe do serviço selecionado"""
-    service_id = st.session_state.active_service
-    service = SERVICES.get(service_id)
+def show_sidebar(finance_manager):
+    """Sidebar principal"""
+    st.image("https://img.icons8.com/color/96/000000/money-bag.png", width=80)
+    st.markdown("## Navegação")
     
-    if not service:
-        st.error("Serviço não encontrado")
-        st.session_state.current_view = "services"
-        st.rerun()
-        return
-    
-    # Header do serviço
-    st.markdown(f"""
-    <div style="margin-bottom: 2rem;">
-        <h1>{service['icon']} {service['title']}</h1>
-        <p style="font-size: 1.2rem; color: #475569;">{service['description']}</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Conteúdo específico por serviço
-    if service_id == "cobranca_indevida":
-        render_billing_guide()
-    elif service_id == "analise_contratos":
-        render_contract_analysis()
-    elif service_id == "cancelamento_assinaturas":
-        render_cancellation_service()
-    else:
-        render_generic_service(service)
-
-def render_billing_guide():
-    """Guia passo a passo para cobrança indevida"""
-    st.markdown("""
-    ## 🚨 Guia Completo: Como Contestar Cobrança Indevida
-    
-    Siga estes passos para resolver seu problema:
-    """)
-    
-    steps = [
-        {
-            "step": 1,
-            "title": "Identifique a Cobrança",
-            "description": "Verifique extratos, faturas e comprovantes. Anote data, valor e descrição.",
-            "details": "• Verifique cartão de crédito, débito automático\n• Confirme se você contratou o serviço\n• Guarde todos os comprovantes"
-        },
-        {
-            "step": 2,
-            "title": "Contate o Estabelecimento",
-            "description": "Entre em contato por telefone, e-mail ou aplicativo.",
-            "details": "• Use o canal oficial de atendimento\n• Peça número de protocolo\n• Documente toda a conversa"
-        },
-        {
-            "step": 3,
-            "description": "Se não resolver, registre reclamação no Procon.",
-            "details": "• Site: procon.sp.gov.br\n• Documentos necessários: RG, CPF, comprovantes\n• Prazo: até 30 dias para resposta"
-        },
-        {
-            "step": 4,
-            "title": "Registre no BACEN",
-            "description": "Para bancos e financeiras, reclame no Banco Central.",
-            "details": "• Site: bacen.gov.br/reclame\n• Prazo: 10 dias úteis\n• Gratuito e obrigatório para instituições"
-        },
-        {
-            "step": 5,
-            "title": "Juntar Provas",
-            "description": "Organize toda a documentação.",
-            "details": "• Comprovantes de pagamento\n• Protocolos de atendimento\n• Prints de conversas\n• Extratos bancários"
-        }
+    menu_options = [
+        "📊 Dashboard Principal",
+        "💸 Gestão de Transações", 
+        "📈 Análises Detalhadas",
+        "🎯 Metas Financeiras",
+        "💰 Orçamentos",
+        "📊 Relatórios",
+        "💼 Investimentos",
+        "🔮 Previsões",
+        "⚙️ Configurações"
     ]
     
-    for step in steps:
-        st.markdown(f"""
-        <div class="step-container">
-            <div class="step-number">{step['step']}</div>
-            <div>
-                <h4 style="margin: 0; color: #0f172a;">{step.get('title', f'Passo {step["step"]}')}</h4>
-                <p style="margin: 0.5rem 0; color: #475569;">{step['description']}</p>
-                <p style="margin: 0; font-size: 0.9rem; color: #64748b;">{step['details']}</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    selected_menu = st.radio("Selecione uma opção:", menu_options, key="selected_menu")
     
-    # Formulário para gerar documento
     st.markdown("---")
-    st.markdown("### 📄 Gerar Carta de Contestação")
+    st.markdown("### 📈 Resumo Rápido")
     
-    with st.form("billing_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            nome = st.text_input("Seu nome completo*")
-            empresa = st.text_input("Nome da empresa*")
-            valor = st.number_input("Valor cobrado (R$)*", min_value=0.01)
-        with col2:
-            data_cobranca = st.date_input("Data da cobrança*")
-            numero_fatura = st.text_input("Número da fatura")
-        
-        descricao = st.text_area("Descreva o problema*", 
-                               placeholder="Exemplo: Esta cobrança apareceu sem minha autorização, nunca contratei este serviço...")
-        
-        if st.form_submit_button("📄 Gerar Carta de Contestação", use_container_width=True):
-            if nome and empresa and valor and descricao:
-                documento = generate_billing_contestation({
-                    'nome': nome,
-                    'empresa': empresa,
-                    'valor': valor,
-                    'data_cobranca': data_cobranca.strftime("%d/%m/%Y"),
-                    'numero_fatura': numero_fatura,
-                    'descricao': descricao
-                })
-                
-                st.session_state.generated_document = documento
-                st.session_state.current_view = "service_result"
-                st.rerun()
-            else:
-                st.error("Preencha todos os campos obrigatórios (*)")
+    # Mostrar métricas rápidas
+    balance = finance_manager.get_balance()
+    monthly_summary = finance_manager.get_monthly_summary()
+    
+    st.metric("Saldo Atual", f"R$ {balance:,.2f}")
+    st.metric("Economias do Mês", f"R$ {monthly_summary['savings']:,.2f}")
+    st.metric("Taxa de Economia", f"{monthly_summary['savings_rate']:.1f}%")
+    
+    # Alertas rápidos
+    st.markdown("---")
+    st.markdown("### ⚡ Alertas")
+    show_quick_alerts(finance_manager)
 
-def render_contract_analysis():
-    """Análise de contratos inteligente"""
-    st.markdown("""
-    ## 🔍 Análise Inteligente de Contratos
+def show_quick_alerts(finance_manager):
+    """Mostra alertas rápidos na sidebar"""
+    budget_status = finance_manager.get_budget_status()
     
-    Faça upload do seu contrato para identificar cláusulas abusivas automaticamente.
-    """)
+    # Verificar orçamentos estourados
+    over_budget_categories = [
+        category for category, status in budget_status.items()
+        if status['status'] == 'over_budget'
+    ]
     
-    uploaded_file = st.file_uploader("Escolha o arquivo do contrato", type=["pdf", "txt"])
+    if over_budget_categories:
+        st.warning(f"🚨 {len(over_budget_categories)} orçamento(s) estourado(s)")
     
-    if uploaded_file:
-        if uploaded_file.type == "application/pdf":
-            text = extract_text_from_pdf(uploaded_file)
-        else:
-            text = str(uploaded_file.read(), 'utf-8')
-        
-        st.success("✅ Contrato carregado com sucesso!")
-        
-        if st.button("🔍 Analisar Contrato", use_container_width=True, type="primary"):
-            with st.spinner("Analisando cláusulas..."):
-                analysis = analyze_contract_comprehensive(text)
-            
-            # Mostrar resultados
-            st.markdown(f"""
-            <div class="clara-card {'risk-high' if analysis['total_points'] > 30 else 'risk-medium' if analysis['total_points'] > 10 else 'risk-low'}">
-                <h3>📊 Resultado da Análise</h3>
-                <div style="font-size: 1.5rem; font-weight: 700; margin: 1rem 0;">
-                    Pontuação: {analysis['total_points']} pontos • {analysis['risk_category']}
-                </div>
-                <p>Cláusulas identificadas: {analysis['total_findings']}</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Detalhes das cláusulas
-            if analysis['findings']:
-                st.markdown("### ⚠️ Cláusulas Identificadas")
-                for finding in analysis['findings']:
-                    risk_color = {
-                        'alto': '#EF4444',
-                        'medio': '#F59E0B',
-                        'baixo': '#10B981'
-                    }[finding['risk_level']]
-                    
-                    st.markdown(f"""
-                    <div style="border-left: 4px solid {risk_color}; padding: 1rem; background: #f8fafc; margin: 0.5rem 0; border-radius: 0 8px 8px 0;">
-                        <div style="display: flex; justify-content: between; align-items: start;">
-                            <div>
-                                <strong style="color: {risk_color};">{finding['description']}</strong>
-                                <div style="color: #475569; font-size: 0.9rem; margin: 0.5rem 0;">
-                                    {finding['legal_basis']}
-                                </div>
-                                <div style="color: #64748b; font-size: 0.8rem;">
-                                    Contexto: "{finding['context'][:150]}..."
-                                </div>
-                            </div>
-                            <div style="background: {risk_color}; color: white; padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600;">
-                                {finding['points']} pts
-                            </div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            # Gerar relatório
-            documento = generate_analysis_report(analysis, text[:1000])
-            st.session_state.generated_document = documento
-            st.session_state.analysis_result = analysis
-            
-            st.markdown("---")
-            st.download_button(
-                "📥 Baixar Relatório Completo",
-                data=documento,
-                file_name=f"analise_contrato_{datetime.now().strftime('%Y%m%d')}.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
+    # Verificar metas próximas do prazo
+    current_goals = [g for g in st.session_state.financial_goals if not g['completed']]
+    urgent_goals = [
+        g for g in current_goals
+        if (g['deadline'] - datetime.now().date()).days <= 30
+    ]
+    
+    if urgent_goals:
+        st.error(f"⏰ {len(urgent_goals)} meta(s) próxima(s) do prazo")
 
-def render_cancellation_service():
-    """Serviço de cancelamento"""
-    with st.form("cancellation_form"):
-        st.markdown("### 📋 Informações do Serviço")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            empresa = st.text_input("Nome da Empresa*")
-            servico = st.text_input("Tipo de Serviço*")
-            data_inicio = st.date_input("Data de Início")
-        with col2:
-            valor_mensal = st.number_input("Valor Mensal (R$)", min_value=0.0)
-            numero_contrato = st.text_input("Número do Contrato")
-        
-        motivo = st.selectbox("Motivo do Cancelamento*", [
-            "Serviço insatisfatório",
-            "Cobranças indevidas",
-            "Não consigo cancelar",
-            "Problemas técnicos",
-            "Mudança de endereço",
-            "Outro"
-        ])
-        
-        detalhes = st.text_area("Descreva o problema*", height=100)
-        
-        if st.form_submit_button("📄 Gerar Carta de Cancelamento", use_container_width=True):
-            if empresa and servico and motivo and detalhes:
-                documento = generate_cancellation_letter({
-                    'empresa': empresa,
-                    'servico': servico,
-                    'data_inicio': data_inicio.strftime("%d/%m/%Y") if data_inicio else "Não informada",
-                    'valor_mensal': valor_mensal,
-                    'numero_contrato': numero_contrato,
-                    'motivo': motivo,
-                    'detalhes': detalhes,
-                    'nome': st.session_state.profile.get('nome', ''),
-                    'email': st.session_state.profile.get('email', '')
-                })
-                
-                st.session_state.generated_document = documento
-                st.session_state.current_view = "service_result"
-                st.rerun()
+# =============================================
+# PÁGINAS PRINCIPAIS (IMPLEMENTAÇÕES DETALHADAS)
+# =============================================
 
-def render_generic_service(service):
-    """Serviço genérico"""
-    st.info(f"🚧 O serviço {service['title']} está em desenvolvimento. Em breve estará disponível!")
+def show_advanced_dashboard(finance_manager):
+    """Dashboard principal avançado"""
+    st.markdown("## 📊 Dashboard Financeiro Completo")
     
-    if st.button("↩️ Voltar aos Serviços", use_container_width=True):
-        st.session_state.current_view = "services"
-        st.rerun()
+    # Métricas principais
+    AdvancedUIComponents.create_progress_dashboard(finance_manager)
+    
+    # Gráficos e visualizações
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        show_income_expense_trend(finance_manager)
+        show_category_breakdown(finance_manager)
+    
+    with col2:
+        show_budget_compliance(finance_manager)
+        show_goals_overview(finance_manager)
+    
+    # Insights inteligentes
+    st.markdown("## 💡 Insights Financeiros")
+    show_ai_insights(finance_manager)
+    
+    # Transações recentes
+    st.markdown("## 🔄 Transações Recentes")
+    show_enhanced_recent_transactions(finance_manager)
 
-def render_service_result():
-    """Resultado do serviço"""
-    documento = st.session_state.get('generated_document', '')
+def show_transaction_management(finance_manager):
+    """Gestão completa de transações"""
+    st.markdown("## 💸 Gestão de Transações")
     
-    st.markdown("""
-    <div style="margin-bottom: 2rem;">
-        <h1>✅ Documento Gerado com Sucesso!</h1>
-        <p style="font-size: 1.2rem; color: #475569;">Seu documento está pronto para uso.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    tab1, tab2, tab3, tab4 = st.tabs(["➕ Nova Transação", "📋 Todas Transações", "🔄 Recorrentes", "📁 Importar/Exportar"])
+    
+    with tab1:
+        show_advanced_transaction_form(finance_manager)
+    
+    with tab2:
+        show_transaction_list(finance_manager)
+    
+    with tab3:
+        show_recurring_transactions(finance_manager)
+    
+    with tab4:
+        show_import_export(finance_manager)
+
+def show_detailed_analysis(finance_manager):
+    """Análises financeiras detalhadas"""
+    st.markdown("## 📈 Análises Financeiras Detalhadas")
+    
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 Visão Geral", "📋 Análise por Categoria", "📅 Tendências", 
+        "🔍 Análise Comparativa", "📐 Métricas Avançadas"
+    ])
+    
+    with tab1:
+        show_comprehensive_overview(finance_manager)
+    
+    with tab2:
+        show_detailed_category_analysis(finance_manager)
+    
+    with tab3:
+        show_trend_analysis_advanced(finance_manager)
+    
+    with tab4:
+        show_comparative_analysis(finance_manager)
+    
+    with tab5:
+        show_advanced_metrics(finance_manager)
+
+def show_advanced_goals(finance_manager):
+    """Sistema avançado de metas"""
+    st.markdown("## 🎯 Metas Financeiras Avançadas")
     
     col1, col2 = st.columns([2, 1])
     
+    with col2:
+        show_goal_creation_form(finance_manager)
+    
     with col1:
-        st.text_area("Documento gerado", value=documento, height=400, label_visibility="collapsed")
-        
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            st.download_button(
-                "📥 Baixar Documento",
-                data=documento,
-                file_name=f"documento_clara_{datetime.now().strftime('%Y%m%d')}.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
-        with col_btn2:
-            if st.button("🔄 Gerar Outro", use_container_width=True):
-                st.session_state.current_view = "service_detail"
-                st.rerun()
+        show_goals_dashboard(finance_manager)
+
+def show_budget_management(finance_manager):
+    """Gestão de orçamentos"""
+    st.markdown("## 💰 Gestão de Orçamentos")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        show_budget_setup(finance_manager)
     
     with col2:
-        st.markdown("### 💡 Próximos Passos")
-        st.info("""
-        1. **Revise** o documento cuidadosamente
-        2. **Imprima** ou **salve** uma cópia
-        3. **Envie** para a parte interessada
-        4. **Guarde** o comprovante de envio
-        5. **Acompanhe** os prazos de resposta
-        """)
+        show_budget_analysis(finance_manager)
+
+def show_reports(finance_manager):
+    """Sistema de relatórios"""
+    st.markdown("## 📊 Relatórios Financeiros")
+    
+    period = st.selectbox("Período do Relatório:", 
+                         ["Últimos 30 dias", "Últimos 3 meses", "Últimos 6 meses", "Este ano", "Personalizado"])
+    
+    if st.button("📄 Gerar Relatório Completo"):
+        report = finance_manager.reporting.generate_comprehensive_report(
+            datetime.now() - timedelta(days=30), 
+            datetime.now()
+        )
+        show_financial_report(report)
+
+def show_investments(finance_manager):
+    """Gestão de investimentos"""
+    st.markdown("## 💼 Carteira de Investimentos")
+    
+    tab1, tab2, tab3 = st.tabs(["📊 Minha Carteira", "➕ Novo Investimento", "📈 Análise de Performance"])
+    
+    with tab1:
+        show_investment_portfolio(finance_manager)
+    
+    with tab2:
+        show_investment_form(finance_manager)
+    
+    with tab3:
+        show_investment_analysis(finance_manager)
+
+def show_advanced_forecasts(finance_manager):
+    """Previsões avançadas"""
+    st.markdown("## 🔮 Previsões Financeiras")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        show_income_forecast_advanced(finance_manager)
+    
+    with col2:
+        show_expense_forecast_advanced(finance_manager)
+    
+    st.markdown("### 🎯 Projeção de Metas")
+    show_goal_forecasts(finance_manager)
+
+def show_advanced_settings(finance_manager):
+    """Configurações avançadas"""
+    st.markdown("## ⚙️ Configurações Avançadas")
+    
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "👤 Perfil", "🔔 Notificações", "💾 Dados", "🎨 Aparência", "🔒 Segurança"
+    ])
+    
+    with tab1:
+        show_profile_settings(finance_manager)
+    
+    with tab2:
+        show_notification_settings(finance_manager)
+    
+    with tab3:
+        show_data_management(finance_manager)
+    
+    with tab4:
+        show_appearance_settings(finance_manager)
+    
+    with tab5:
+        show_security_settings(finance_manager)
+
+# =============================================
+# FUNÇÕES DE VISUALIZAÇÃO DETALHADAS
+# =============================================
+
+def show_income_expense_trend(finance_manager):
+    """Mostra tendência de receitas vs despesas"""
+    st.markdown("### 📈 Tendência Receitas vs Despesas")
+    
+    # Implementar gráfico de tendências
+    # ... (código para gerar gráfico)
+    
+    st.plotly_chart(create_income_expense_trend_chart(finance_manager), use_container_width=True)
+
+def show_category_breakdown(finance_manager):
+    """Mostra breakdown por categoria"""
+    st.markdown("### 🎯 Distribuição por Categoria")
+    
+    # Implementar gráfico de categorias
+    # ... (código para gerar gráfico)
+    
+    st.plotly_chart(create_category_breakdown_chart(finance_manager), use_container_width=True)
+
+def show_budget_compliance(finance_manager):
+    """Mostra conformidade com orçamentos"""
+    st.markdown("### ✅ Conformidade com Orçamentos")
+    
+    budget_status = finance_manager.get_budget_status()
+    
+    if budget_status:
+        categories = list(budget_status.keys())
+        percentages = [status['percentage'] for status in budget_status.values()]
         
-        if not st.session_state.premium:
-            st.markdown("---")
-            st.warning(f"Análises restantes: {st.session_state.free_uses}")
-            if st.button("⭐ Fazer Upgrade", use_container_width=True):
-                st.session_state.current_view = "premium"
+        fig = go.Figure(data=[
+            go.Bar(name='% Utilizado', x=categories, y=percentages,
+                  marker_color=['green' if p <= 100 else 'red' for p in percentages])
+        ])
+        
+        fig.add_hline(y=100, line_dash="dash", line_color="red", 
+                     annotation_text="Limite do Orçamento")
+        
+        fig.update_layout(
+            title="Utilização dos Orçamentos por Categoria",
+            yaxis_title="Percentual Utilizado (%)",
+            height=400
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("ℹ️ Nenhum orçamento definido ainda.")
+
+def show_goals_overview(finance_manager):
+    """Visão geral das metas"""
+    st.markdown("### 🎯 Visão Geral das Metas")
+    
+    goals = st.session_state.financial_goals
+    
+    if goals:
+        for goal in goals[:3]:  # Mostrar apenas 3 metas
+            progress_info = finance_manager.goal_manager.calculate_goal_progress(goal)
+            
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.write(f"**{goal['goal']}**")
+                st.progress(progress_info['current_progress'] / 100)
+                
+            with col2:
+                st.metric(
+                    "Progresso", 
+                    f"{progress_info['current_progress']:.1f}%",
+                    f"{progress_info['status']}"
+                )
+            
+            st.caption(f"R$ {goal['current_amount']:,.2f} de R$ {goal['target_amount']:,.2f} • {progress_info['days_remaining']} dias restantes")
+            st.divider()
+    else:
+        st.info("🎯 Você ainda não tem metas financeiras. Crie sua primeira meta!")
+
+def show_ai_insights(finance_manager):
+    """Insights inteligentes baseados em IA"""
+    monthly_summary = finance_manager.get_monthly_summary()
+    budget_status = finance_manager.get_budget_status()
+    
+    insights = []
+    
+    # Análise de savings rate
+    if monthly_summary['savings_rate'] >= 25:
+        insights.append("💰 **Excelente!** Sua taxa de economia está acima de 25% - continue assim!")
+    elif monthly_summary['savings_rate'] <= 5:
+        insights.append("⚠️ **Atenção!** Sua taxa de economia está muito baixa. Considere reduzir despesas.")
+    
+    # Análise de orçamentos
+    over_budget_count = sum(1 for status in budget_status.values() 
+                           if status['status'] == 'over_budget')
+    if over_budget_count > 0:
+        insights.append(f"🎯 **Otimização necessária:** {over_budget_count} categoria(s) está(ão) acima do orçamento")
+    
+    # Análise de consistência
+    if len(st.session_state.transactions) < 10:
+        insights.append("📊 **Dica:** Registre mais transações para obter análises mais precisas")
+    
+    # Mostrar insights
+    for insight in insights:
+        st.write(f"- {insight}")
+
+def show_enhanced_recent_transactions(finance_manager):
+    """Transações recentes com mais detalhes"""
+    transactions = sorted(
+        st.session_state.transactions, 
+        key=lambda x: x['date'], 
+        reverse=True
+    )[:15]
+    
+    if not transactions:
+        st.info("💸 Nenhuma transação registrada ainda. Adicione sua primeira transação!")
+        return
+    
+    for transaction in transactions:
+        amount_color = "positive" if transaction['type'] == 'Receita' else "negative"
+        amount_prefix = "+" if transaction['type'] == 'Receita' else "-"
+        recurring_icon = " 🔄" if transaction.get('recurring', False) else ""
+        
+        col1, col2, col3, col4 = st.columns([4, 2, 1, 1])
+        
+        with col1:
+            st.write(f"**{transaction['description']}**{recurring_icon}")
+            st.caption(f"{transaction['category']} • {transaction['date'].strftime('%d/%m/%Y')}")
+        
+        with col2:
+            st.write("")
+        
+        with col3:
+            st.markdown(f"<span class='{amount_color}'>{amount_prefix}R$ {transaction['amount']:,.2f}</span>", 
+                       unsafe_allow_html=True)
+        
+        with col4:
+            if st.button("🗑️", key=f"delete_{transaction['id']}"):
+                # Implementar deleção
+                pass
+        
+        st.divider()
+
+# =============================================
+# FUNÇÕES AUXILIARES PARA GRÁFICOS
+# =============================================
+
+def create_income_expense_trend_chart(finance_manager):
+    """Cria gráfico de tendência de receitas vs despesas"""
+    # Implementação do gráfico
+    fig = go.Figure()
+    
+    # Adicionar dados de exemplo (substituir por dados reais)
+    dates = pd.date_range(start='2024-01-01', end='2024-12-01', freq='M')
+    income = [5000, 5200, 4800, 5500, 6000, 5800, 6200, 6500, 6300, 6700, 7000, 7200]
+    expenses = [4500, 4700, 4600, 4800, 5200, 5100, 5300, 5500, 5400, 5600, 5800, 6000]
+    
+    fig.add_trace(go.Scatter(x=dates, y=income, name='Receitas', line=dict(color='green')))
+    fig.add_trace(go.Scatter(x=dates, y=expenses, name='Despesas', line=dict(color='red')))
+    
+    fig.update_layout(
+        title="Tendência de Receitas vs Despesas",
+        xaxis_title="Mês",
+        yaxis_title="Valor (R$)",
+        height=400
+    )
+    
+    return fig
+
+def create_category_breakdown_chart(finance_manager):
+    """Cria gráfico de distribuição por categoria"""
+    monthly_summary = finance_manager.get_monthly_summary()
+    expense_by_category = monthly_summary['expense_by_category']
+    
+    if expense_by_category:
+        fig = px.pie(
+            values=list(expense_by_category.values()),
+            names=list(expense_by_category.keys()),
+            title="Distribuição de Despesas por Categoria"
+        )
+        fig.update_layout(height=400)
+    else:
+        # Gráfico de exemplo quando não há dados
+        fig = px.pie(
+            values=[100],
+            names=['Sem Dados'],
+            title="Distribuição de Despesas por Categoria"
+        )
+        fig.update_layout(height=400)
+    
+    return fig
+
+# =============================================
+# OUTRAS FUNÇÕES DE VISUALIZAÇÃO
+# =============================================
+
+def show_notifications(notification_system):
+    """Mostra painel de notificações"""
+    st.markdown("## 🔔 Notificações")
+    
+    if not notification_system.notifications:
+        st.info("📭 Nenhuma notificação no momento.")
+        return
+    
+    unread_notifications = [n for n in notification_system.notifications if not n['read']]
+    read_notifications = [n for n in notification_system.notifications if n['read']]
+    
+    if unread_notifications:
+        st.markdown("### 📨 Não Lidas")
+        for notification in unread_notifications:
+            show_notification_card(notification, notification_system)
+    
+    if read_notifications:
+        st.markdown("### 📭 Lidas")
+        for notification in read_notifications:
+            show_notification_card(notification, notification_system)
+    
+    if st.button("✅ Marcar Todas como Lidas"):
+        notification_system.mark_all_read()
+        st.rerun()
+
+def show_notification_card(notification, notification_system):
+    """Mostra card de notificação individual"""
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        st.write(f"**{notification['title']}**")
+        st.write(notification['message'])
+        st.caption(notification['timestamp'].strftime('%d/%m/%Y %H:%M'))
+    
+    with col2:
+        if not notification['read']:
+            if st.button("👁️", key=f"read_{notification['id']}"):
+                notification['read'] = True
                 st.rerun()
 
-def render_footer():
-    """Rodapé"""
-    st.markdown("""
-    <div class="footer">
-        <div style="margin-bottom: 1rem;">
-            <strong>CLARA LAW</strong> - Sua Assistente Jurídica Pessoal
-        </div>
-        <div style="font-size: 0.8rem; color: #475569;">
-            © 2024 CLARA • Inteligência para um mundo mais claro • Versão 4.0
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+# =============================================
+# IMPLEMENTAÇÕES DAS OUTRAS PÁGINAS
+# =============================================
 
-# -------------------------------------------------
-# Geradores de Documentos
-# -------------------------------------------------
-def generate_billing_contestation(data):
-    return f"""
-CARTA DE CONTESTAÇÃO - COBRANÇA INDEVIDA
-
-De: {data['nome']}
-
-Para: {data['empresa']}
-
-Assunto: Contestação de cobrança indevida no valor de R$ {data['valor']:.2f}
-
-Prezados Senhores,
-
-Venho por meio desta contestar formalmente a cobrança no valor de R$ {data['valor']:.2f}, 
-realizada em {data['data_cobranca']}, referente à fatura {data['numero_fatura']}.
-
-MOTIVO DA CONTESTAÇÃO:
-{data['descricao']}
-
-Com fundamento no Código de Defesa do Consumidor (Lei 8.078/90), solicito:
-
-1. O cancelamento imediato desta cobrança;
-2. O estorno do valor, se já debitado;
-3. A correção monetária e juros legais, se aplicável;
-4. A confirmação por escrito do cancelamento.
-
-Atenciosamente,
-
-{data['nome']}
-"""
-
-def generate_cancellation_letter(data):
-    return f"""
-CARTA DE CANCELAMENTO - {data['servico'].upper()}
-
-De: {data['nome']}
-E-mail: {data.get('email', '')}
-
-Para: {data['empresa']}
-
-Assunto: Cancelamento de serviço/assinatura
-
-Prezados Senhores,
-
-Venho por meio desta comunicar o CANCELAMENTO do serviço {data['servico']}, 
-contratado em {data['data_inicio']}.
-
-MOTIVO: {data['motivo']}
-
-DETALHES:
-{data['detalhes']}
-
-Com fundamento no Código de Defesa do Consumidor, solicito:
-
-1. Cancelamento imediato;
-2. Bloqueio de cobranças futuras;
-3. Confirmação por e-mail;
-4. Reembolso proporcional, se aplicável.
-
-Atenciosamente,
-
-{data['nome']}
-{data.get('email', '')}
-"""
-
-def generate_analysis_report(analysis, contract_preview):
-    return f"""
-RELATÓRIO DE ANÁLISE DE CONTRATO - CLARA LAW
-
-Data da análise: {datetime.now().strftime('%d/%m/%Y às %H:%M')}
-Pontuação total: {analysis['total_points']} pontos
-Classificação de risco: {analysis['risk_category']}
-Total de cláusulas identificadas: {analysis['total_findings']}
-
-RESUMO DA ANÁLISE:
-{'-' * 50}
-
-{chr(10).join([f"• {f['description']} ({f['points']} pontos - {f['risk_level'].upper()})" for f in analysis['findings']])}
-
-DETALHES DAS CLÁUSULAS IDENTIFICADAS:
-{'-' * 50}
-
-{chr(10).join([f"""
-CLÁUSULA: {f['description']}
-RISCO: {f['risk_level'].upper()} ({f['points']} pontos)
-BASE LEGAL: {f['legal_basis']}
-CONTEXTO: {f['context'][:200]}...
-""" for f in analysis['findings']])}
-
-PRÉVIA DO CONTRATO:
-{'-' * 50}
-
-{contract_preview}...
-
-RECOMENDAÇÕES:
-1. Revise as cláusulas destacadas com atenção
-2. Considere negociar termos mais favoráveis
-3. Busque orientação jurídica especializada se necessário
-
-Este relatório foi gerado automaticamente pela CLARA LAW e não substitui 
-aconselhamento jurídico profissional.
-"""
-
-# -------------------------------------------------
-# Main App
-# -------------------------------------------------
-def main():
-    # Header
-    render_header()
-    
-    # Conteúdo principal
-    if st.session_state.current_view == "home":
-        render_hero()
-        render_stats()
-        render_services_grid()
+def show_advanced_transaction_form(finance_manager):
+    """Formulário avançado para transações"""
+    with st.form("advanced_transaction_form"):
+        col1, col2 = st.columns(2)
         
-    elif st.session_state.current_view == "services":
-        render_services_grid()
+        with col1:
+            transaction_type = st.radio("Tipo de Transação:", ["Receita", "Despesa"], horizontal=True)
+            amount = st.number_input("Valor (R$):", min_value=0.0, step=0.01, format="%.2f")
+            date = st.date_input("Data:", datetime.now())
+            category_options = (finance_manager.categories['Receitas'] 
+                              if transaction_type == 'Receita' 
+                              else finance_manager.categories['Despesas'])
+            category = st.selectbox("Categoria:", category_options)
         
-    elif st.session_state.current_view == "login":
-        render_login()
+        with col2:
+            description = st.text_input("Descrição:")
+            tags = st.multiselect("Tags:", ["Essencial", "Opcional", "Investimento", "Lazer"])
+            recurring = st.checkbox("Transação Recorrente")
+            
+            if recurring:
+                frequency = st.selectbox("Frequência:", ["Mensal", "Semanal", "Quinzenal", "Anual"])
+                end_date = st.date_input("Data Final (opcional):", 
+                                       datetime.now() + timedelta(days=365))
         
-    elif st.session_state.current_view == "premium":
-        render_premium()
+        notes = st.text_area("Observações (opcional):")
         
-    elif st.session_state.current_view == "service_detail":
-        render_service_detail()
+        submitted = st.form_submit_button("💾 Salvar Transação")
         
-    elif st.session_state.current_view == "service_result":
-        render_service_result()
-    
-    # Footer
-    render_footer()
+        if submitted:
+            if amount > 0 and description:
+                transaction = finance_manager.add_transaction(
+                    amount=amount,
+                    category=category,
+                    description=description,
+                    transaction_type=transaction_type,
+                    date=datetime.combine(date, datetime.min.time()),
+                    recurring=recurring,
+                    recurring_frequency=frequency if recurring else None
+                )
+                
+                st.success("✅ Transação adicionada com sucesso!")
+                
+                # Mostrar resumo
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Saldo Atual", f"R$ {finance_manager.get_balance():,.2f}")
+                with col2:
+                    st.metric("Total de Transações", len(st.session_state.transactions))
+                with col3:
+                    monthly = finance_manager.get_monthly_summary()
+                    st.metric("Economias do Mês", f"R$ {monthly['savings']:,.2f}")
+            else:
+                st.error("❌ Por favor, preencha todos os campos obrigatórios.")
+
+# ... (implementações das outras funções continuariam aqui)
+
+# =============================================
+# EXECUÇÃO PRINCIPAL
+# =============================================
 
 if __name__ == "__main__":
     main()
