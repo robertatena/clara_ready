@@ -1,620 +1,978 @@
-import streamlit as st
-import pandas as pd
-import requests
-import json
-from datetime import datetime
-import base64
+# app.py — CLARA • Sua Assistente Jurídica Pessoal
+# Versão PROFISSIONAL com UX moderna + Email para advogado
+
+import os
 import io
 import re
-from typing import List, Dict, Tuple
+import csv
+import smtplib
+from email.mime.text import MimeText
+from email.mime.multipart import MimeMultipart
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any, Tuple, Set, List
 
-# Configuração da página
-st.set_page_config(
-    page_title="Clara Ready - Seu Assistente Jurídico Inteligente",
-    page_icon="⚖️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+import streamlit as st
+
+# ---- módulos locais ----
+from app_modules.pdf_utils import extract_text_from_pdf
+from app_modules.analysis import analyze_contract_text, summarize_hits, compute_cet_quick
+from app_modules.stripe_utils import init_stripe, create_checkout_session, verify_checkout_session
+from app_modules.storage import (
+    init_db,
+    log_analysis_event,
+    log_subscriber,
+    list_subscribers,
+    get_subscriber_by_email,
 )
 
-# CSS personalizado
-st.markdown("""
-<style>
+# -------------------------------------------------
+# Configs
+# -------------------------------------------------
+APP_TITLE = "CLARA • Sua Assistente Jurídica Pessoal"
+VERSION = "v3.0"
+
+st.set_page_config(page_title=APP_TITLE, page_icon="⚖️", layout="wide", initial_sidebar_state="collapsed")
+
+# Secrets / env
+STRIPE_PUBLIC_KEY = st.secrets.get("STRIPE_PUBLIC_KEY", os.getenv("STRIPE_PUBLIC_KEY", ""))
+STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", os.getenv("STRIPE_SECRET_KEY", ""))
+STRIPE_PRICE_ID   = st.secrets.get("STRIPE_PRICE_ID",   os.getenv("STRIPE_PRICE_ID", ""))
+BASE_URL          = st.secrets.get("BASE_URL",          os.getenv("BASE_URL", "https://claraready.streamlit.app"))
+
+# Email config
+SMTP_SERVER = st.secrets.get("SMTP_SERVER", "")
+SMTP_PORT = st.secrets.get("SMTP_PORT", 587)
+SMTP_USERNAME = st.secrets.get("SMTP_USERNAME", "")
+SMTP_PASSWORD = st.secrets.get("SMTP_PASSWORD", "")
+ADMIN_EMAIL = st.secrets.get("ADMIN_EMAIL", "")
+
+MONTHLY_PRICE_TEXT = "R$ 9,90/mês"
+
+# -------------------------------------------------
+# Estilo PROFISSIONAL
+# -------------------------------------------------
+st.markdown(
+    """
+    <style>
+    :root {
+        --clara-primary: #2563eb;
+        --clara-secondary: #7c3aed;
+        --clara-accent: #f59e0b;
+        --clara-dark: #1e293b;
+        --clara-darker: #0f172a;
+        --clara-light: #f8fafc;
+        --clara-gray: #64748b;
+        --clara-success: #10b981;
+        --clara-warning: #f59e0b;
+        --clara-danger: #ef4444;
+    }
+    
     .main-header {
-        font-size: 2.8rem;
-        color: #7B1FA2;
+        background: linear-gradient(135deg, var(--clara-darker) 0%, var(--clara-dark) 100%);
+        padding: 1.5rem 0;
+        border-bottom: 1px solid #334155;
+    }
+    
+    .hero-section {
+        background: linear-gradient(135deg, var(--clara-darker) 0%, var(--clara-dark) 100%);
+        color: white;
+        padding: 5rem 0;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .hero-section::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" opacity="0.1"><polygon fill="white" points="0,1000 1000,0 1000,1000"/></svg>');
+        background-size: cover;
+    }
+    
+    .hero-content {
+        position: relative;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 2rem;
         text-align: center;
-        margin-bottom: 1rem;
+    }
+    
+    .badge {
+        background: var(--clara-accent);
+        color: var(--clara-darker);
+        padding: 0.5rem 1.5rem;
+        border-radius: 50px;
+        font-weight: 700;
+        font-size: 0.9rem;
+        display: inline-block;
+        margin-bottom: 2rem;
+    }
+    
+    .hero-title {
+        font-size: 3.5rem;
         font-weight: 800;
-        background: linear-gradient(135deg, #7B1FA2, #E91E63);
+        margin: 1rem 0;
+        line-height: 1.1;
+        background: linear-gradient(135deg, #fff 0%, #cbd5e1 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
-    .sub-header {
-        font-size: 1.8rem;
-        color: #7B1FA2;
-        margin-bottom: 1.5rem;
-        font-weight: 700;
+    
+    .hero-subtitle {
+        font-size: 1.3rem;
+        opacity: 0.9;
+        margin-bottom: 3rem;
+        line-height: 1.6;
+        max-width: 600px;
+        margin-left: auto;
+        margin-right: auto;
     }
-    .feature-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
+    
+    .card {
+        background: white;
+        border-radius: 16px;
         padding: 2rem;
-        border-radius: 15px;
-        margin: 1rem 0;
-        text-align: center;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        border: 1px solid #e2e8f0;
+        transition: all 0.3s ease;
+        height: 100%;
     }
-    .alert-box {
-        background-color: #FFF3CD;
-        border: 1px solid #FFEAA7;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 1rem 0;
+    
+    .card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.12);
     }
-    .success-box {
-        background-color: #D1ECF1;
-        border: 1px solid #BEE5EB;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 1rem 0;
+    
+    .service-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 2rem;
+        margin: 3rem 0;
     }
-    .contract-section {
-        background-color: #f8f9fa;
+    
+    .feature-icon {
+        width: 70px;
+        height: 70px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--clara-primary), var(--clara-secondary));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.8rem;
+        margin: 0 auto 1.5rem;
+    }
+    
+    .btn-primary {
+        background: linear-gradient(135deg, var(--clara-primary), var(--clara-secondary)) !important;
+        color: white !important;
+        border: none !important;
+        font-weight: 600 !important;
+        padding: 0.75rem 2rem !important;
+        border-radius: 12px !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(37, 99, 235, 0.3) !important;
+    }
+    
+    .step-container {
+        display: flex;
+        align-items: center;
+        margin: 2rem 0;
+        padding: 2rem;
+        background: var(--clara-light);
+        border-radius: 16px;
+        border-left: 5px solid var(--clara-primary);
+    }
+    
+    .step-number {
+        background: var(--clara-primary);
+        color: white;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 1.2rem;
+        margin-right: 1.5rem;
+        flex-shrink: 0;
+    }
+    
+    .metric-card {
+        background: linear-gradient(135deg, var(--clara-primary), var(--clara-secondary));
+        color: white;
         padding: 1.5rem;
-        border-radius: 10px;
-        border-left: 4px solid #7B1FA2;
+        border-radius: 12px;
+        text-align: center;
+    }
+    
+    .nav-container {
+        background: white;
+        padding: 1rem 0;
+        border-bottom: 1px solid #e2e8f0;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        position: sticky;
+        top: 0;
+        z-index: 100;
+    }
+    
+    .premium-badge {
+        background: linear-gradient(135deg, var(--clara-warning), #f97316);
+        color: white;
+        padding: 0.3rem 1rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    
+    .analysis-result {
+        border-left: 4px solid var(--clara-primary);
+        padding-left: 1rem;
         margin: 1rem 0;
     }
-</style>
-""", unsafe_allow_html=True)
+    
+    .critical-item {
+        border-left: 4px solid var(--clara-danger);
+        background: #fef2f2;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border-radius: 0 8px 8px 0;
+    }
+    
+    .warning-item {
+        border-left: 4px solid var(--clara-warning);
+        background: #fffbeb;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border-radius: 0 8px 8px 0;
+    }
+    
+    .info-item {
+        border-left: 4px solid var(--clara-primary);
+        background: #eff6ff;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border-radius: 0 8px 8px 0;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-class ContractAnalyzer:
-    def __init__(self):
-        self.clausulas_problematicas = {
-            'juros_abusivos': {
-                'patterns': [
-                    r'juros.*(\d{2,})%',
-                    r'taxa.*(\d{2,})%',
-                    r'multa.*(\d{2,})%'
-                ],
-                'risco': 'Alto',
-                'recomendacao': 'Juros acima de 1% ao mês podem ser considerados abusivos. Sugerimos negociar redução.'
-            },
-            'clausula_penal_excessiva': {
-                'patterns': [
-                    r'multa.*(\d{2,})%',
-                    r'penalidade.*(\d{2,})%'
-                ],
-                'risco': 'Médio',
-                'recomendacao': 'Multas superiores a 2% podem ser revisadas judicialmente.'
-            },
-            'alteracao_unilateral': {
-                'patterns': [
-                    r'unilateralmente',
-                    r'a critério.*empresa',
-                    r'reserva.*direito.*alterar'
-                ],
-                'risco': 'Alto',
-                'recomendacao': 'Cláusulas que permitem alteração unilateral são abusivas.'
-            },
-            'renuncia_direitos': {
-                'patterns': [
-                    r'renúncia.*direito',
-                    r'concorda.*não.*processar',
-                    r'abre.*mão.*direitos'
-                ],
-                'risco': 'Alto',
-                'recomendacao': 'Não é permitida renúncia antecipada de direitos.'
-            }
-        }
+# -------------------------------------------------
+# Estado da Sessão
+# -------------------------------------------------
+if "started" not in st.session_state:
+    st.session_state.started = False
+if "profile" not in st.session_state:
+    st.session_state.profile = {"nome": "", "email": "", "cel": "", "papel": "Contratante"}
+if "premium" not in st.session_state:
+    st.session_state.premium = False
+if "free_runs_left" not in st.session_state:
+    st.session_state.free_runs_left = 1
+if "current_view" not in st.session_state:
+    st.session_state.current_view = "home"
+if "analysis_results" not in st.session_state:
+    st.session_state.analysis_results = None
+if "lawyer_email_sent" not in st.session_state:
+    st.session_state.lawyer_email_sent = False
+
+# -------------------------------------------------
+# Utils / Validações
+# -------------------------------------------------
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+PHONE_RE = re.compile(r"^\+?\d{10,15}$")
+
+def _parse_admin_emails() -> Set[str]:
+    raw = st.secrets.get("admin_emails", None)
+    if raw is None:
+        raw = os.getenv("ADMIN_EMAILS", "")
+    if isinstance(raw, list):
+        return {str(x).strip().lower() for x in raw if str(x).strip()}
+    if isinstance(raw, str):
+        return {e.strip().lower() for e in raw.split(",") if e.strip()}
+    return set()
+
+ADMIN_EMAILS = _parse_admin_emails()
+
+def current_email() -> str:
+    return (st.session_state.profile.get("email") or "").strip().lower()
+
+def is_valid_email(v: str) -> bool:
+    return bool(EMAIL_RE.match((v or "").strip()))
+
+def is_valid_phone(v: str) -> bool:
+    digits = re.sub(r"\D", "", v or "")
+    return bool(PHONE_RE.match(digits))
+
+def is_premium() -> bool:
+    if st.session_state.premium:
+        return True
+    email = current_email()
+    if not email:
+        return False
+    try:
+        if get_subscriber_by_email(email):
+            st.session_state.premium = True
+            return True
+    except Exception:
+        pass
+    return False
+
+def send_lawyer_email(analysis_data: Dict, user_profile: Dict, lawyer_email: str) -> bool:
+    """Envia email profissional para advogado com análise do contrato"""
+    try:
+        if not all([SMTP_SERVER, SMTP_USERNAME, SMTP_PASSWORD, lawyer_email]):
+            return False
+            
+        msg = MimeMultipart()
+        msg['Subject'] = f"Análise de Contrato - Cliente: {user_profile.get('nome', 'Não informado')}"
+        msg['From'] = SMTP_USERNAME
+        msg['To'] = lawyer_email
         
-        self.leis_referencia = [
-            "Código de Defesa do Consumidor (Lei 8.078/90)",
-            "Código Civil Brasileiro (Lei 10.406/02)",
-            "Lei do Superendividamento (Lei 14.181/21)",
-            "Lei de Liberdade Econômica (Lei 13.874/19)"
-        ]
-
-    def analisar_contrato(self, texto: str) -> Dict:
-        """Analisa o texto do contrato em busca de cláusulas problemáticas"""
-        resultados = {
-            'clausulas_problematicas': [],
-            'pontos_atenção': [],
-            'score_risco': 0,
-            'recomendacoes': [],
-            'leis_aplicaveis': self.leis_referencia
-        }
+        # Corpo do email formatado
+        html = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                    <h2 style="color: #2563eb; text-align: center;">📋 Análise de Contrato - CLARA</h2>
+                    
+                    <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                        <h3>👤 Dados do Cliente</h3>
+                        <p><strong>Nome:</strong> {user_profile.get('nome', 'Não informado')}</p>
+                        <p><strong>Email:</strong> {user_profile.get('email', 'Não informado')}</p>
+                        <p><strong>Telefone:</strong> {user_profile.get('cel', 'Não informado')}</p>
+                        <p><strong>Papel no contrato:</strong> {user_profile.get('papel', 'Não informado')}</p>
+                    </div>
+                    
+                    <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                        <h3>📊 Resumo da Análise</h3>
+                        <p><strong>Setor:</strong> {analysis_data.get('context', {}).get('setor', 'Não informado')}</p>
+                        <p><strong>Valor envolvido:</strong> R$ {analysis_data.get('context', {}).get('limite_valor', 0):.2f}</p>
+                        <p><strong>Total de pontos analisados:</strong> {len(analysis_data.get('hits', []))}</p>
+                        <p><strong>Pontos críticos identificados:</strong> {analysis_data.get('summary', {}).get('criticos', 0)}</p>
+                        <p><strong>Gravidade geral:</strong> {analysis_data.get('summary', {}).get('gravidade', 'Média')}</p>
+                    </div>
+                    
+                    <div style="margin: 20px 0;">
+                        <h3>⚠️ Pontos de Atenção Críticos</h3>
+        """
         
-        texto_lower = texto.lower()
-        
-        for clausula, info in self.clausulas_problematicas.items():
-            for pattern in info['patterns']:
-                if re.search(pattern, texto_lower):
-                    resultados['clausulas_problematicas'].append({
-                        'tipo': clausula,
-                        'risco': info['risco'],
-                        'recomendacao': info['recomendacao']
-                    })
-                    resultados['score_risco'] += 1
-        
-        # Análise de pontos de atenção adicionais
-        if len(texto.split()) < 500:
-            resultados['pontos_atenção'].append("Contrato muito curto - pode estar incompleto")
-        
-        if 'confidencialidade' not in texto_lower:
-            resultados['pontos_atenção'].append("Ausência de cláusula de confidencialidade")
-        
-        if 'rescisão' not in texto_lower:
-            resultados['pontos_atenção'].append("Cláusula de rescisão não identificada")
-        
-        # Recomendações gerais
-        if resultados['score_risco'] > 2:
-            resultados['recomendacoes'].append("⚠️ Contrato apresenta alto risco. Recomendamos consulta com advogado.")
-        elif resultados['score_risco'] > 0:
-            resultados['recomendacoes'].append("🔍 Contrato apresenta pontos de atenção que devem ser revisados.")
-        else:
-            resultados['recomendacoes'].append("✅ Contrato aparenta estar dentro dos parâmetros legais.")
-        
-        return resultados
-
-class LegalAssistant:
-    def __init__(self):
-        self.servicos_disponiveis = [
-            "Análise de Contratos",
-            "Recursos de Multas de Trânsito",
-            "Cancelamento de Assinaturas",
-            "Ação Renovatória",
-            "Direito do Consumidor",
-            "Direito Trabalhista"
-        ]
-        
-        self.modelos_documentos = {
-            "multa_transito": "Recurso para Multa de Trânsito",
-            "cancelamento_assinatura": "Carta de Cancelamento",
-            "notificacao_extrajudicial": "Notificação Extrajudicial",
-            "reclamacao_consumidor": "Reclamação no PROCON"
-        }
-
-    def gerar_documento(self, tipo: str, dados: Dict) -> str:
-        """Gera documentos legais personalizados"""
-        modelos = {
-            "multa_transito": f"""
-EXMO. SR. DR. JUIZ DE DIREITO DA {dados.get('vara', 'XXª VARA CÍVEL')}
-Processo: {dados.get('processo', 'Nº 0000000-00.0000.0.00.0000')}
-
-RECURSO DE MULTA DE TRÂNSITO
-
-{dados.get('nome', 'NOME DO RECORRENTE')}, brasileiro, portador do CPF {dados.get('cpf', '000.000.000-00')}, 
-vem respeitosamente à presença de Vossa Excelência, através deste recurso, impugnar a multa de trânsito 
-aplicada conforme auto de infração nº {dados.get('numero_auto', '000000000')}, pelos seguintes fundamentos:
-
-1. {dados.get('fundamento1', 'Fundamento jurídico aqui')}
-2. {dados.get('fundamento2', 'Segundo fundamento jurídico')}
-
-Diante do exposto, requer:
-- O provimento do presente recurso
-- O cancelamento da multa aplicada
-- A juntada de documentos em anexo
-
-Local e data: {dados.get('cidade', 'Cidade')}, {datetime.now().strftime('%d/%m/%Y')}
-
-Atenciosamente,
-{dados.get('nome', 'Nome do Recorrente')}
-            """,
-            "cancelamento_assinatura": f"""
-À {dados.get('empresa', 'NOME DA EMPRESA')}
-CNPJ: {dados.get('cnpj', '00.000.000/0000-00')}
-
-CARTA DE CANCELAMENTO
-
-Eu, {dados.get('nome', 'NOME DO CLIENTE')}, portador do CPF {dados.get('cpf', '000.000.000-00')}, 
-venho por meio desta comunicar o cancelamento da assinatura/service {dados.get('servico', 'nome do serviço')}, 
-contratado em {dados.get('data_contratacao', '00/00/0000')}.
-
-Fundamento legal: Artigo 49 do Código de Defesa do Consumidor.
-
-Solicito:
-1. Cancelamento imediato do serviço
-2. Encerramento de cobranças futuras
-3. Confirmação por escrito do cancelamento
-
-Atenciosamente,
-{dados.get('nome', 'Nome do Cliente')}
-Telefone: {dados.get('telefone', '(00) 00000-0000')}
-Email: {dados.get('email', 'email@exemplo.com')}
+        # Adicionar pontos críticos
+        critical_items = [h for h in analysis_data.get('hits', []) if h.get('severity') in ['ALTA', 'CRÍTICO']]
+        for i, item in enumerate(critical_items[:5], 1):
+            html += f"""
+                        <div style="background: #fef2f2; padding: 10px; margin: 10px 0; border-left: 4px solid #ef4444; border-radius: 4px;">
+                            <h4 style="margin: 0; color: #dc2626;">{i}. {item.get('title', 'Sem título')}</h4>
+                            <p style="margin: 5px 0;">{item.get('explanation', 'Sem explicação')}</p>
+                            <p style="margin: 5px 0;"><strong>Sugestão:</strong> {item.get('suggestion', 'Sem sugestão')}</p>
+                        </div>
             """
+        
+        html += f"""
+                    </div>
+                    
+                    <div style="background: #f0fdf4; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                        <h3>💡 Recomendações da CLARA</h3>
+                        <p>{analysis_data.get('summary', {}).get('resumo', 'Sem recomendações específicas')}</p>
+                        <p><strong>Próximos passos sugeridos:</strong></p>
+                        <ul>
+                            <li>Revisar cláusulas críticas com cliente</li>
+                            <li>Negociar termos problemáticos</li>
+                            <li>Considerar rescisão se necessário</li>
+                        </ul>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+                        <p style="color: #64748b; font-size: 0.9em;">
+                            Análise gerada automaticamente por CLARA - Sua Assistente Jurídica Pessoal<br>
+                            Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}
+                        </p>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        
+        msg.attach(MimeText(html, 'html'))
+        
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Erro ao enviar email: {str(e)}")
+        return False
+
+# -------------------------------------------------
+# Componentes de UI
+# -------------------------------------------------
+def render_professional_nav():
+    """Navegação profissional"""
+    st.markdown("""
+    <div class="nav-container">
+        <div style="max-width: 1200px; margin: 0 auto; padding: 0 2rem; display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 2rem;">
+                <h3 style="color: var(--clara-primary); margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+                    ⚖️ CLARA LAW
+                </h3>
+                <div style="display: flex; gap: 1rem;">
+                    <button onclick="window.streamlitSessionState.setItem('current_view', 'home')" style="background: none; border: none; color: var(--clara-gray); cursor: pointer; padding: 0.5rem 1rem; border-radius: 8px; transition: all 0.3s ease;">🏠 Início</button>
+                    <button onclick="window.streamlitSessionState.setItem('current_view', 'services')" style="background: none; border: none; color: var(--clara-gray); cursor: pointer; padding: 0.5rem 1rem; border-radius: 8px; transition: all 0.3s ease;">🛡️ Serviços</button>
+                    <button onclick="window.streamlitSessionState.setItem('current_view', 'analysis')" style="background: none; border: none; color: var(--clara-gray); cursor: pointer; padding: 0.5rem 1rem; border-radius: 8px; transition: all 0.3s ease;">📄 Analisar</button>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                {premium_badge}
+                <button onclick="window.streamlitSessionState.setItem('current_view', 'premium')" class="btn-primary" style="font-size: 0.9rem;">⭐ Premium</button>
+            </div>
+        </div>
+    </div>
+    """.format(premium_badge='<span class="premium-badge">PREMIUM</span>' if is_premium() else ''), 
+    unsafe_allow_html=True)
+
+def render_hero_section():
+    """Hero section profissional"""
+    st.markdown("""
+    <div class="hero-section">
+        <div class="hero-content">
+            <div class="badge">🤖 ASSISTENTE JURÍDICO PESSOAL</div>
+            <h1 class="hero-title">Justiça Acessível para Todos</h1>
+            <p class="hero-subtitle">
+                Use inteligência artificial para entender contratos complexos, resolver disputas 
+                e proteger seus direitos de forma simples, rápida e acessível.
+            </p>
+            <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+                <button onclick="window.streamlitSessionState.setItem('current_view', 'analysis')" class="btn-primary" style="font-size: 1.1rem; padding: 1rem 2rem;">
+                    🚀 Analisar Meu Contrato
+                </button>
+                <button onclick="window.streamlitSessionState.setItem('current_view', 'services')" style="background: rgba(255,255,255,0.1); color: white; border: 2px solid rgba(255,255,255,0.3); padding: 1rem 2rem; border-radius: 12px; font-size: 1.1rem; font-weight: 600; cursor: pointer; transition: all 0.3s ease;">
+                    📚 Ver Serviços
+                </button>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_services_grid():
+    """Grid de serviços profissional"""
+    st.markdown("""
+    <div style="max-width: 1200px; margin: 0 auto; padding: 4rem 2rem;">
+        <div style="text-align: center; margin-bottom: 4rem;">
+            <h2>Serviços Jurídicos Inteligentes</h2>
+            <p style="color: var(--clara-gray); font-size: 1.2rem; max-width: 600px; margin: 0 auto;">
+                Soluções completas para suas necessidades jurídicas do dia a dia
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    services = [
+        {
+            "icon": "📄",
+            "title": "Análise de Contratos",
+            "description": "Identifique cláusulas abusivas, riscos escondidos e termos problemáticos em qualquer contrato",
+            "features": ["Detecção de multas abusivas", "Análise de cláusulas críticas", "Sugestões de negociação"],
+            "action": "Analisar Contrato"
+        },
+        {
+            "icon": "💰", 
+            "title": "Disputas Financeiras",
+            "description": "Recupere cobranças indevidas, dispute taxas abusivas e negocie dívidas",
+            "features": ["Análise de cobranças", "Modelos de contestação", "Cálculo de juros"],
+            "action": "Resolver Disputa"
+        },
+        {
+            "icon": "🏠",
+            "title": "Direito do Consumidor", 
+            "description": "Proteja-se contra práticas abusivas, produtos defeituosos e má prestação de serviços",
+            "features": ["Análise de garantias", "Orientações para reclamações", "Modelos de notificação"],
+            "action": "Proteger Direitos"
+        },
+        {
+            "icon": "📊",
+            "title": "Cálculo de CET",
+            "description": "Descubra o custo real de empréstimos, financiamentos e cartões de crédito",
+            "features": ["Cálculo transparente", "Comparação de propostas", "Análise de encargos"],
+            "action": "Calcular CET"
+        },
+        {
+            "icon": "⚖️",
+            "title": "Modelos Jurídicos",
+            "description": "Acesse modelos prontos de documentos, notificações e recursos",
+            "features": ["Notificações extrajudiciais", "Recursos administrativos", "Contestações"],
+            "action": "Ver Modelos"
+        },
+        {
+            "icon": "🔒",
+            "title": "LGPD e Privacidade",
+            "description": "Proteja seus dados pessoais e exija transparência no tratamento de informações",
+            "features": ["Análise de consentimento", "Orientações para exclusão", "Modelos de solicitação"],
+            "action": "Proteger Dados"
         }
-        
-        return modelos.get(tipo, "Modelo não encontrado.")
-
-# Inicializar classes
-analisador = ContractAnalyzer()
-assistente = LegalAssistant()
-
-def main():
-    st.markdown('<div class="main-header">⚖️ Clara Ready - Seu Assistente Jurídico Brasileiro</div>', unsafe_allow_html=True)
+    ]
     
-    st.markdown("""
-    <div style='text-align: center; color: #666; margin-bottom: 2rem;'>
-        A primeira plataforma brasileira de defesa do consumidor e assistência jurídica automatizada
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="service-grid">', unsafe_allow_html=True)
     
-    # Menu de navegação
-    menu = st.sidebar.selectbox(
-        "Navegação",
-        ["🏠 Início", "📄 Análise de Contratos", "🚗 Recursos de Trânsito", "📝 Modelos de Documentos", "ℹ️ Direitos do Consumidor"]
-    )
-    
-    if menu == "🏠 Início":
-        show_home()
-    elif menu == "📄 Análise de Contratos":
-        show_contract_analysis()
-    elif menu == "🚗 Recursos de Trânsito":
-        show_traffic_appeals()
-    elif menu == "📝 Modelos de Documentos":
-        show_document_templates()
-    elif menu == "ℹ️ Direitos do Consumidor":
-        show_consumer_rights()
-
-def show_home():
-    st.markdown('<div class="sub-header">🎯 Como a Clara Ready Pode Te Ajudar Hoje?</div>', unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        <div class="feature-card">
-            <h3>📄 Análise de Contratos</h3>
-            <p>Revise contratos e identifique cláusulas abusivas automaticamente</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div class="feature-card">
-            <h3>🚗 Recursos de Multas</h3>
-            <p>Recorra multas de trânsito com modelos personalizados</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("""
-        <div class="feature-card">
-            <h3>📝 Documentos Jurídicos</h3>
-            <p>Gere cartas, recursos e notificações automaticamente</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # Casos de sucesso
-    st.markdown("### 🏆 Casos Resolvidos com Sucesso")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        <div class="success-box">
-            <h4>💰 R$ 15.760 em multas canceladas</h4>
-            <p>João Silva usou nossos recursos e cancelou 8 multas de trânsito</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("""
-        <div class="success-box">
-            <h4>📄 Contrato revisado em 5 minutos</h4>
-            <p>Maria Santos identificou 3 cláusulas abusivas no seu financiamento</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div class="success-box">
-            <h4>🔔 Assinatura cancelada</h4>
-            <p>Carlos Oliveira cancelou serviço com base no artigo 49 do CDC</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("""
-        <div class="success-box">
-            <h4>⚖️ Direitos garantidos</h4>
-            <p>Ana Costa recebeu indenização por cobrança indevida</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-def show_contract_analysis():
-    st.markdown('<div class="sub-header">📄 Análise Inteligente de Contratos</div>', unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div class="alert-box">
-        <strong>⚠️ Atenção:</strong> Esta análise não substitui consulta com advogado. 
-        É uma ferramenta de triagem para identificar possíveis problemas.
-    </div>
-    """, unsafe_allow_html=True)
-    
-    tab1, tab2, tab3 = st.tabs(["📤 Upload do Contrato", "📝 Colar Texto", "📊 Análise Rápida"])
-    
-    with tab1:
-        uploaded_file = st.file_uploader("Faça upload do contrato (PDF, DOCX ou TXT)", 
-                                       type=['pdf', 'docx', 'txt'])
-        
-        if uploaded_file is not None:
-            # Simulação de processamento de arquivo
-            st.success(f"✅ Arquivo {uploaded_file.name} carregado com sucesso!")
-            
-            if st.button("🔍 Analisar Contrato", type="primary"):
-                with st.spinner("Analisando contrato..."):
-                    # Simulação de análise
-                    texto_exemplo = """
-                    CONTRATO DE PRESTAÇÃO DE SERVIÇOS
-                    
-                    Cláusula 1 - OBJETO: Contratação de serviços mediante pagamento mensal.
-                    Cláusula 2 - PRAZO: Vigência de 12 meses com renovação automática.
-                    Cláusula 3 - MULTA: Em caso de rescisão, multa de 50% do valor total.
-                    Cláusula 4 - JUROS: Juros de 5% ao mês em caso de atraso.
-                    Cláusula 5 - ALTERAÇÕES: A empresa pode alterar unilateralmente os termos.
-                    """
-                    
-                    resultados = analisador.analisar_contrato(texto_exemplo)
-                    mostrar_resultados_analise(resultados)
-    
-    with tab2:
-        texto_contrato = st.text_area("Cole o texto do contrato aqui:", height=300,
-                                    placeholder="Cole o texto completo do contrato para análise...")
-        
-        if st.button("🔍 Analisar Texto", type="primary", key="analyze_text"):
-            if texto_contrato:
-                with st.spinner("Analisando texto do contrato..."):
-                    resultados = analisador.analisar_contrato(texto_contrato)
-                    mostrar_resultados_analise(resultados)
-            else:
-                st.warning("Por favor, cole o texto do contrato para análise.")
-    
-    with tab3:
-        st.markdown("### 📊 Análise Rápida por Tipo de Contrato")
-        
-        tipo_contrato = st.selectbox(
-            "Selecione o tipo de contrato:",
-            ["Empréstimo/FINAME", "Aluguel", "Trabalho", "Prestação de Serviços", "Consórcio"]
-        )
-        
-        if st.button("🎯 Análise Específica", type="primary"):
-            st.info(f"Análise específica para contrato de {tipo_contrato}")
-            
-            # Dicas específicas por tipo de contrato
-            dicas = {
-                "Empréstimo/FINAME": [
-                    "Verifique os juros - não podem ser superiores a 1% ao mês + taxa de risco",
-                    "Confira se há seguros embutidos no valor",
-                    "Atenção a multas por antecipação"
-                ],
-                "Aluguel": [
-                    "Reajuste máximo pelo IGP-M ou índice contratado",
-                    "Verifique cláusulas de fiador e caução",
-                    "Multa de 1/3 do aluguel em caso de quebra"
-                ]
-            }
-            
-            for dica in dicas.get(tipo_contrato, ["Analise todas as cláusulas cuidadosamente"]):
-                st.markdown(f"• {dica}")
-
-def mostrar_resultados_analise(resultados):
-    st.markdown("---")
-    st.markdown("## 📋 Resultados da Análise")
-    
-    # Score de risco
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        risco_color = "red" if resultados['score_risco'] > 2 else "orange" if resultados['score_risco'] > 0 else "green"
-        st.metric("Nível de Risco", resultados['score_risco'], delta=None, delta_color="off")
-    
-    with col2:
-        st.metric("Cláusulas Problemáticas", len(resultados['clausulas_problematicas']))
-    
-    with col3:
-        st.metric("Pontos de Atenção", len(resultados['pontos_atenção']))
-    
-    # Cláusulas problemáticas
-    if resultados['clausulas_problematicas']:
-        st.markdown("### 🚨 Cláusulas Identificadas")
-        
-        for clausula in resultados['clausulas_problematicas']:
-            cor = "🔴" if clausula['risco'] == 'Alto' else "🟡"
+    for i, service in enumerate(services):
+        with st.container():
             st.markdown(f"""
-            <div class="contract-section">
-                <h4>{cor} {clausula['tipo'].replace('_', ' ').title()}</h4>
-                <p><strong>Risco:</strong> {clausula['risco']}</p>
-                <p><strong>Recomendação:</strong> {clausula['recomendacao']}</p>
+            <div class="card">
+                <div class="feature-icon">{service['icon']}</div>
+                <h3 style="text-align: center; margin-bottom: 1rem;">{service['title']}</h3>
+                <p style="color: var(--clara-gray); text-align: center; margin-bottom: 1.5rem;">{service['description']}</p>
+                <ul style="color: var(--clara-gray); margin-bottom: 2rem; padding-left: 1rem;">
+                    {''.join([f'<li>{feature}</li>' for feature in service['features']])}
+                </ul>
+                <button onclick="window.streamlitSessionState.setItem('current_view', 'analysis')" class="btn-primary" style="width: 100%;">
+                    {service['action']}
+                </button>
             </div>
             """, unsafe_allow_html=True)
-    else:
-        st.success("✅ Nenhuma cláusula problemática identificada!")
     
-    # Pontos de atenção
-    if resultados['pontos_atenção']:
-        st.markdown("### 🔍 Pontos de Atenção")
-        for ponto in resultados['pontos_atenção']:
-            st.warning(ponto)
-    
-    # Recomendações
-    st.markdown("### 💡 Recomendações")
-    for recomendacao in resultados['recomendacoes']:
-        st.info(recomendacao)
-    
-    # Leis aplicáveis
-    st.markdown("### ⚖️ Legislação Aplicável")
-    for lei in resultados['leis_aplicaveis']:
-        st.markdown(f"• {lei}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-def show_traffic_appeals():
-    st.markdown('<div class="sub-header">🚗 Recursos de Multas de Trânsito</div>', unsafe_allow_html=True)
-    
+def render_analysis_workflow():
+    """Fluxo de análise profissional"""
     st.markdown("""
-    <div class="alert-box">
-        <strong>💡 Dica:</strong> Você pode recorrer de multas dentro de 30 dias. 
-        Nossa plataforma gera o recurso automaticamente!
-    </div>
+    <div style="max-width: 1000px; margin: 0 auto; padding: 2rem;">
+        <div style="text-align: center; margin-bottom: 3rem;">
+            <h1>Análise Profissional de Contratos</h1>
+            <p style="color: var(--clara-gray); font-size: 1.1rem;">
+                Em 3 passos simples, tenha uma análise completa do seu contrato
+            </p>
+        </div>
     """, unsafe_allow_html=True)
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### 📝 Dados da Multa")
-        
-        numero_auto = st.text_input("Número do Auto de Infração:")
-        data_infracao = st.date_input("Data da Infração:")
-        orgao_autuador = st.selectbox("Órgão Autuador:", ["DETRAN", "Polícia Rodoviária Federal", "Municipal"])
-        tipo_infracao = st.selectbox("Tipo de Infração:", [
-            "Excesso de Velocidade",
-            "Avançar Sinal Vermelho", 
-            "Estacionamento em Local Proibido",
-            "Uso do Celular ao Volante"
-        ])
-    
-    with col2:
-        st.markdown("### 👤 Seus Dados")
-        
-        nome_condutor = st.text_input("Nome do Condutor:")
-        cpf = st.text_input("CPF:")
-        habilitacao = st.text_input("Nº da CNH:")
-        endereco = st.text_input("Endereço:")
-    
-    fundamentos = st.text_area("Fundamentos do Recurso (opcional):",
-                             placeholder="Descreva brevemente por que você está recorrendo...")
-    
-    if st.button("🔄 Gerar Recurso Automático", type="primary"):
-        if numero_auto and nome_condutor:
-            dados = {
-                'nome': nome_condutor,
-                'cpf': cpf,
-                'numero_auto': numero_auto,
-                'vara': 'XXª VARA CÍVEL',
-                'cidade': 'Sua Cidade',
-                'fundamento1': 'Ausência de sinalização adequada' if not fundamentos else fundamentos,
-                'fundamento2': 'Erro na aferição do equipamento'
-            }
-            
-            documento = assistente.gerar_documento("multa_transito", dados)
-            
-            st.markdown("### 📄 Recurso Gerado com Sucesso!")
-            st.text_area("Seu recurso:", documento, height=400)
-            
-            # Botão para download
-            st.download_button(
-                label="📥 Baixar Recurso em PDF",
-                data=documento,
-                file_name=f"recurso_multas_{numero_auto}.txt",
-                mime="text/plain"
-            )
-        else:
-            st.error("Por favor, preencha pelo menos o número do auto e seu nome.")
-
-def show_document_templates():
-    st.markdown('<div class="sub-header">📝 Modelos de Documentos Jurídicos</div>', unsafe_allow_html=True)
-    
-    tipo_documento = st.selectbox(
-        "Selecione o tipo de documento:",
-        ["Carta de Cancelamento", "Notificação Extrajudicial", "Reclamação no PROCON", "Recurso Administrativo"]
-    )
-    
-    if tipo_documento == "Carta de Cancelamento":
-        st.markdown("### 📝 Carta de Cancelamento (Artigo 49 CDC)")
+    # Passo 1 - Dados do usuário
+    with st.container():
+        st.markdown("""
+        <div class="step-container">
+            <div class="step-number">1</div>
+            <div style="flex: 1;">
+                <h3 style="margin: 0 0 1rem 0;">Seus Dados</h3>
+                <p style="color: var(--clara-gray); margin: 0;">
+                    Preencha suas informações para personalizarmos a análise
+                </p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
-        
         with col1:
-            nome_cliente = st.text_input("Seu Nome Completo:")
-            cpf_cliente = st.text_input("Seu CPF:")
-            nome_empresa = st.text_input("Nome da Empresa:")
-        
+            nome = st.text_input("Nome completo*", value=st.session_state.profile.get("nome", ""))
+            email = st.text_input("E-mail*", value=st.session_state.profile.get("email", ""))
         with col2:
-            cnpj_empresa = st.text_input("CNPJ da Empresa (opcional):")
-            servico = st.text_input("Serviço a Cancelar:")
-            data_contratacao = st.date_input("Data da Contratação:")
+            cel = st.text_input("Celular*", value=st.session_state.profile.get("cel", ""))
+            papel = st.selectbox("Seu papel no contrato*", 
+                               ["Contratante", "Contratado", "Fornecedor", "Consumidor", "Outro"],
+                               index=0)
         
-        if st.button("📄 Gerar Carta de Cancelamento", type="primary"):
-            if nome_cliente and nome_empresa:
-                dados = {
-                    'nome': nome_cliente,
-                    'cpf': cpf_cliente,
-                    'empresa': nome_empresa,
-                    'cnpj': cnpj_empresa,
-                    'servico': servico,
-                    'data_contratacao': data_contratacao.strftime('%d/%m/%Y'),
-                    'telefone': '(00) 00000-0000',
-                    'email': 'seuemail@exemplo.com'
+        if st.button("💾 Salvar Dados", use_container_width=True):
+            errors = []
+            if not nome.strip():
+                errors.append("Nome é obrigatório")
+            if not email.strip() or not is_valid_email(email):
+                errors.append("E-mail válido é obrigatório")
+            if not cel.strip() or not is_valid_phone(cel):
+                errors.append("Celular válido é obrigatório")
+            
+            if errors:
+                st.error(" • ".join(errors))
+            else:
+                st.session_state.profile = {
+                    "nome": nome.strip(),
+                    "email": email.strip(),
+                    "cel": cel.strip(),
+                    "papel": papel
                 }
+                st.success("Dados salvos com sucesso!")
+    
+    # Passo 2 - Upload do contrato
+    with st.container():
+        st.markdown("""
+        <div class="step-container">
+            <div class="step-number">2</div>
+            <div style="flex: 1;">
+                <h3 style="margin: 0 0 1rem 0;">Contrato</h3>
+                <p style="color: var(--clara-gray); margin: 0;">
+                    Envie o contrato que deseja analisar
+                </p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        tab1, tab2 = st.tabs(["📤 Upload PDF", "📝 Colar Texto"])
+        raw_text = ""
+        
+        with tab1:
+            uploaded_file = st.file_uploader("Faça upload do contrato em PDF", type=["pdf"], 
+                                           label_visibility="collapsed")
+            if uploaded_file:
+                with st.spinner("Processando PDF..."):
+                    raw_text = extract_text_from_pdf(uploaded_file)
+                    if raw_text:
+                        st.success(f"✅ PDF processado! {len(raw_text)} caracteres extraídos.")
+        
+        with tab2:
+            raw_text = st.text_area("Cole o texto do contrato:", value=raw_text, height=200,
+                                  placeholder="Copie e cole o texto completo do contrato aqui...")
+    
+    # Passo 3 - Contexto da análise
+    with st.container():
+        st.markdown("""
+        <div class="step-container">
+            <div class="step-number">3</div>
+            <div style="flex: 1;">
+                <h3 style="margin: 0 0 1rem 0;">Contexto</h3>
+                <p style="color: var(--clara-gray); margin: 0;">
+                    Informações adicionais para melhorar a análise
+                </p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            setor = st.selectbox("Setor do contrato", 
+                               ["Genérico", "SaaS/Serviços", "Empréstimos", "Educação", 
+                                "Plano de saúde", "Imobiliário", "Trabalhista", "Outro"])
+        with col2:
+            valor = st.number_input("Valor envolvido (R$)", min_value=0.0, step=100.0,
+                                  help="Valor máximo do contrato, se aplicável")
+        with col3:
+            urgencia = st.selectbox("Urgência", 
+                                  ["Baixa", "Média", "Alta", "Crítica"])
+    
+    return raw_text, {"setor": setor, "papel": papel, "limite_valor": valor, "urgencia": urgencia}
+
+def render_analysis_results(text: str, ctx: Dict[str, Any]):
+    """Renderiza resultados da análise de forma profissional"""
+    if not text.strip():
+        st.warning("📝 Por favor, envie o contrato ou cole o texto para análise.")
+        return
+
+    if not is_premium() and st.session_state.free_runs_left <= 0:
+        st.info("""
+        🚀 **Você usou sua análise gratuita** 
+        
+        Assine o **CLARA Premium** para análises ilimitadas e recursos exclusivos!
+        """)
+        if st.button("⭐ Assinar Premium", use_container_width=True):
+            st.session_state.current_view = "premium"
+        return
+
+    with st.spinner("🔍 CLARA está analisando seu contrato... Isso pode levar alguns instantes."):
+        hits, meta = analyze_contract_text(text, ctx)
+
+    if not is_premium():
+        st.session_state.free_runs_left -= 1
+
+    # Log da análise
+    email_for_log = current_email()
+    log_analysis_event(email=email_for_log, 
+                      meta={"setor": ctx["setor"], "papel": ctx["papel"], "len": len(text)})
+
+    resume = summarize_hits(hits)
+    
+    # Salvar resultados na sessão
+    st.session_state.analysis_results = {
+        "hits": hits,
+        "summary": resume,
+        "context": ctx,
+        "profile": st.session_state.profile
+    }
+    
+    # Header de resultados
+    st.success(f"**✅ Análise concluída!** {resume['resumo']}")
+    
+    # Métricas
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div style="font-size: 2rem; font-weight: bold;">{len(hits)}</div>
+            <div>Pontos Analisados</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div style="font-size: 2rem; font-weight: bold;">{resume['criticos']}</div>
+            <div>Críticos</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        gravidade_cor = {
+            "Baixa": "#10b981",
+            "Média": "#f59e0b", 
+            "Alta": "#ef4444",
+            "Crítica": "#dc2626"
+        }.get(resume['gravidade'], "#64748b")
+        st.markdown(f"""
+        <div class="metric-card">
+            <div style="font-size: 2rem; font-weight: bold; color: {gravidade_cor};">{resume['gravidade']}</div>
+            <div>Gravidade</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col4:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div style="font-size: 2rem; font-weight: bold;">{resume['sugestoes']}</div>
+            <div>Sugestões</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Pontos de atenção
+    st.markdown("### 📋 Pontos de Atenção Detalhados")
+    
+    # Filtrar por severidade
+    severidades = ["CRÍTICO", "ALTA", "MÉDIA", "BAIXA"]
+    for severidade in severidades:
+        hits_filtrados = [h for h in hits if h.get('severity') == severidade]
+        if hits_filtrados:
+            st.markdown(f"#### {severidade} ({len(hits_filtrados)})")
+            
+            for i, hit in enumerate(hits_filtrados, 1):
+                css_class = {
+                    "CRÍTICO": "critical-item",
+                    "ALTA": "warning-item", 
+                    "MÉDIA": "info-item",
+                    "BAIXA": "info-item"
+                }.get(severidade, "info-item")
                 
-                documento = assistente.gerar_documento("cancelamento_assinatura", dados)
-                
-                st.markdown("### ✅ Carta Gerada com Sucesso!")
-                st.text_area("Sua carta de cancelamento:", documento, height=300)
-                
-                st.download_button(
-                    label="📥 Baixar Carta",
-                    data=documento,
-                    file_name=f"carta_cancelamento_{nome_empresa}.txt",
-                    mime="text/plain"
+                st.markdown(f"""
+                <div class="{css_class}">
+                    <h4 style="margin: 0 0 0.5rem 0;">{i}. {hit['title']}</h4>
+                    <p style="margin: 0.5rem 0;"><strong>Explicação:</strong> {hit.get('explanation', 'Sem explicação disponível')}</p>
+                    {f'<p style="margin: 0.5rem 0;"><strong>💡 Sugestão:</strong> {hit["suggestion"]}</p>' if hit.get('suggestion') else ''}
+                    {f'<div style="background: #f8fafc; padding: 0.5rem; border-radius: 4px; margin: 0.5rem 0;"><strong>📜 Evidência:</strong><br>{hit["evidence"][:300]}{"..." if len(hit["evidence"]) > 300 else ""}</div>' if hit.get('evidence') else ''}
+                </div>
+                """, unsafe_allow_html=True)
+    
+    # Enviar para advogado
+    st.markdown("---")
+    st.markdown("### ⚖️ Enviar para Advogado")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        lawyer_email = st.text_input("E-mail do seu advogado", placeholder="advogado@escritorio.com")
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("📧 Enviar Análise", use_container_width=True, 
+                    disabled=not lawyer_email or st.session_state.lawyer_email_sent):
+            if send_lawyer_email(st.session_state.analysis_results, st.session_state.profile, lawyer_email):
+                st.session_state.lawyer_email_sent = True
+                st.success("✅ Análise enviada com sucesso para o advogado!")
+            else:
+                st.error("❌ Erro ao enviar email. Verifique as configurações.")
+    
+    if st.session_state.lawyer_email_sent:
+        st.info("📨 Email enviado! Seu advogado recebeu a análise completa.")
+
+def render_premium_section():
+    """Seção premium profissional"""
+    st.markdown("""
+    <div style="max-width: 1000px; margin: 0 auto; padding: 3rem 2rem; text-align: center;">
+        <div class="badge" style="margin-bottom: 1rem;">⭐ CLARA PREMIUM</div>
+        <h1 style="margin-bottom: 1rem;">Acesso Ilimitado à Justiça</h1>
+        <p style="color: var(--clara-gray); font-size: 1.2rem; max-width: 600px; margin: 0 auto 3rem;">
+            Tenha análises ilimitadas, recursos exclusivos e suporte prioritário
+        </p>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    
+    with col2:
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #fef7ff, #faf5ff); border: 2px solid #8b5cf6; border-radius: 20px; padding: 3rem 2rem; text-align: center; position: relative;">
+            <div style="position: absolute; top: -15px; left: 50%; transform: translateX(-50%); background: #8b5cf6; color: white; padding: 0.5rem 2rem; border-radius: 20px; font-weight: bold;">
+                MAIS POPULAR
+            </div>
+            <h2 style="color: #7c3aed; margin-bottom: 1rem;">Plano Premium</h2>
+            <div style="font-size: 3rem; font-weight: bold; color: #1e293b; margin-bottom: 1rem;">
+                R$ 9,90<span style="font-size: 1rem; color: #64748b;">/mês</span>
+            </div>
+            <p style="color: #64748b; margin-bottom: 2rem;">Cancele quando quiser</p>
+            
+            <div style="text-align: left; margin-bottom: 3rem;">
+                <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                    <span style="color: #10b981; font-size: 1.2rem; margin-right: 0.5rem;">✓</span>
+                    <span>Análises ilimitadas de contratos</span>
+                </div>
+                <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                    <span style="color: #10b981; font-size: 1.2rem; margin-right: 0.5rem;">✓</span>
+                    <span>Modelos de documentos exclusivos</span>
+                </div>
+                <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                    <span style="color: #10b981; font-size: 1.2rem; margin-right: 0.5rem;">✓</span>
+                    <span>Cálculos financeiros detalhados</span>
+                </div>
+                <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                    <span style="color: #10b981; font-size: 1.2rem; margin-right: 0.5rem;">✓</span>
+                    <span>Suporte prioritário por email</span>
+                </div>
+                <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                    <span style="color: #10b981; font-size: 1.2rem; margin-right: 0.5rem;">✓</span>
+                    <span>Relatórios profissionais em PDF</span>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Botão de assinatura
+    if STRIPE_PUBLIC_KEY and STRIPE_SECRET_KEY and STRIPE_PRICE_ID:
+        if st.button("🚀 Assinar Agora - R$ 9,90/mês", use_container_width=True, type="primary"):
+            email = current_email()
+            if not email:
+                st.error("Por favor, preencha seu e-mail na página de análise primeiro.")
+                return
+            
+            try:
+                session = create_checkout_session(
+                    STRIPE_SECRET_KEY, 
+                    STRIPE_PRICE_ID, 
+                    email, 
+                    BASE_URL
                 )
+                st.markdown(f'<a href="{session.url}" target="_blank" style="text-decoration: none;"><button class="btn-primary" style="width: 100%;">🚀 Finalizar Pagamento</button></a>', 
+                           unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Erro ao criar sessão de pagamento: {str(e)}")
+    else:
+        st.warning("Configuração do Stripe não encontrada. Modo de demonstração.")
 
-def show_consumer_rights():
-    st.markdown('<div class="sub-header">ℹ️ Seus Direitos como Consumidor</div>', unsafe_allow_html=True)
+# -------------------------------------------------
+# Views Principais
+# -------------------------------------------------
+def home_view():
+    render_hero_section()
     
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 CDC", "💳 Cartão de Crédito", "📱 Serviços", "🏠 Contratos"])
+    # Métricas de impacto
+    st.markdown("""
+    <div style="max-width: 1200px; margin: 0 auto; padding: 4rem 2rem;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem; margin: 4rem 0;">
+            <div style="text-align: center;">
+                <div style="font-size: 3rem; font-weight: bold; color: var(--clara-primary);">+2.5k</div>
+                <div style="color: var(--clara-gray);">Contratos Analisados</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 3rem; font-weight: bold; color: var(--clara-primary);">R$ 15M+</div>
+                <div style="color: var(--clara-gray);">Em Disputas Resolvidas</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 3rem; font-weight: bold; color: var(--clara-primary);">98%</div>
+                <div style="color: var(--clara-gray);">Satisfação dos Usuários</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 3rem; font-weight: bold; color: var(--clara-primary);">24/7</div>
+                <div style="color: var(--clara-gray);">Disponibilidade</div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
     
-    with tab1:
-        st.markdown("### 📋 Código de Defesa do Consumidor")
-        
-        direitos = [
-            "**Artigo 6°** - Direito à informação clara sobre produtos e serviços",
-            "**Artigo 18°** - Responsabilidade por vícios aparentes ou de fácil constatação",
-            "**Artigo 39°** - Práticas abusivas vedadas aos fornecedores", 
-            "**Artigo 49°** - Direito de arrependimento em 7 dias para compras fora do estabelecimento"
-        ]
-        
-        for direito in direitos:
-            st.markdown(f"• {direito}")
+    render_services_grid()
     
-    with tab2:
-        st.markdown("### 💳 Direitos no Cartão de Crédito")
-        
-        st.markdown("""
-        - **Anuidade**: Só pode ser cobrada se explicitamente acordada
-        - **Limite**: Banco não pode reduzir limite sem comunicação prévia
-        - **Juros**: Máximo de 30% ao ano + taxa de risco (resolução CMN 4.539)
-        - **Compras não reconhecidas**: Você não paga enquanto não for comprovada a fraude
-        """)
-    
-    with tab3:
-        st.markdown("### 📱 Direitos em Serviços")
-        
-        st.markdown("""
-        - **Telefonia/Internet**: Você pode cancelar sem multa se houver mudança na qualidade
-        - **Assinaturas**: Direito de cancelar a qualquer tempo (artigo 49 CDC)
-        - **Cobrança indevida**: Direito ao dobro do valor cobrado indevidamente + correção
-        - **Serviços essenciais**: Não podem ser cortados sem aviso prévio de 30 dias
-        """)
-    
-    with tab4:
-        st.markdown("### 🏠 Direitos em Contratos")
-        
-        st.markdown("""
-        - **Cláusulas abusivas**: São nulas de pleno direito (artigo 51 CDC)
-        - **Letras miúdas**: Não têm validade se você não as leu
-        - **Alteração unilateral**: Fornecedor não pode mudar contrato sozinho
-        - **Vícios ocultos**: Responsabilidade do fornecedor por até 90 dias após descoberta
-        """)
+    # CTA final
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, var(--clara-darker), var(--clara-dark)); color: white; padding: 5rem 2rem; text-align: center; border-radius: 20px; margin: 4rem 0;">
+        <h2 style="margin-bottom: 1rem;">Pronto para Proteger Seus Direitos?</h2>
+        <p style="font-size: 1.2rem; opacity: 0.9; margin-bottom: 3rem; max-width: 500px; margin-left: auto; margin-right: auto;">
+            Comece agora sua análise gratuita e evite problemas futuros
+        </p>
+        <button onclick="window.streamlitSessionState.setItem('current_view', 'analysis')" class="btn-primary" style="font-size: 1.2rem; padding: 1rem 3rem;">
+            🚀 Começar Agora
+        </button>
+    </div>
+    """, unsafe_allow_html=True)
 
-# Rodapé
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #666; padding: 2rem;'>
-    <strong>⚖️ Clara Ready</strong> - Seu assistente jurídico pessoal<br>
-    <small>Este serviço oferece orientação jurídica básica e não substitui consulta com advogado.</small>
-</div>
-""", unsafe_allow_html=True)
+def services_view():
+    st.markdown("""
+    <div style="max-width: 1200px; margin: 0 auto; padding: 3rem 2rem;">
+        <div style="text-align: center; margin-bottom: 4rem;">
+            <h1>Nossos Serviços Jurídicos</h1>
+            <p style="color: var(--clara-gray); font-size: 1.2rem;">
+                Soluções completas para suas necessidades jurídicas do dia a dia
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+    render_services_grid()
+
+def analysis_view():
+    st.markdown("""
+    <div style="max-width: 1000px; margin: 0 auto; padding: 2rem 1rem;">
+        <div style="text-align: center; margin-bottom: 3rem;">
+            <h1>Análise de Contratos</h1>
+            <p style="color: var(--clara-gray); font-size: 1.1rem;">
+                Analise qualquer contrato em minutos e identifique riscos escondidos
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    raw_text, ctx = render_analysis_workflow()
+    
+    if st.button("🔍 Analisar Contrato", type="primary", use_container_width=True):
+        render_analysis_results(raw_text, ctx)
+
+def premium_view():
+    render_premium_section()
+
+# -------------------------------------------------
+# App Principal
+# -------------------------------------------------
+def main():
+    # Inicialização
+    init_db()
+    init_stripe(STRIPE_PUBLIC_KEY, STRIPE_SECRET_KEY)
+    
+    # Navegação
+    render_professional_nav()
+    
+    # Roteamento de views
+    current_view = st.session_state.current_view
+    
+    if current_view == "home":
+        home_view()
+    elif current_view == "services":
+        services_view()
+    elif current_view == "analysis":
+        analysis_view()
+    elif current_view == "premium":
+        premium_view()
+    else:
+        home_view()
+    
+    # Footer
+    st.markdown("""
+    <div style="background: var(--clara-darker); color: white; padding: 3rem 2rem; margin-top: 4rem;">
+        <div style="max-width: 1200px; margin: 0 auto; text-align: center;">
+            <h3 style="color: white; margin-bottom: 2rem;">⚖️ CLARA • Sua Assistente Jurídica Pessoal</h3>
+            <div style="display: flex; justify-content: center; gap: 2rem; flex-wrap: wrap; margin-bottom: 2rem;">
+                <a href="#" style="color: #cbd5e1; text-decoration: none;">Termos de Uso</a>
+                <a href="#" style="color: #cbd5e1; text-decoration: none;">Política de Privacidade</a>
+                <a href="#" style="color: #cbd5e1; text-decoration: none;">Contato</a>
+                <a href="#" style="color: #cbd5e1; text-decoration: none;">Sobre Nós</a>
+            </div>
+            <p style="color: #94a3b8; font-size: 0.9rem;">
+                CLARA é uma ferramenta de auxílio jurídico e não substitui a consulta com um advogado.<br>
+                © 2024 CLARA Law. Todos os direitos reservados.
+            </p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
