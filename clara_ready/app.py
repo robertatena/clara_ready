@@ -1,6 +1,6 @@
-# app.py — CLARA • Sua Assistente Jurídica Pessoal
-# Versão melhorada com UX DoNotPay + Identidade CLARA
-# Mantém TODAS as funcionalidades originais
+# app.py — CLARA • Análise de Contratos (single‑page, UX refinada)
+# Home clean & alinhada + linguagem simples + Stripe + CET + logs CSV + Hotjar + Admin
+# Mantém TODAS as funcionalidades e incorpora o feedback do usuário
 
 import os
 import io
@@ -27,10 +27,10 @@ from app_modules.storage import (
 # -------------------------------------------------
 # Configs
 # -------------------------------------------------
-APP_TITLE = "CLARA • Sua Assistente Jurídica Pessoal"
-VERSION = "v2.0"
+APP_TITLE = "CLARA • Análise de Contratos"
+VERSION = "v15.0"
 
-st.set_page_config(page_title=APP_TITLE, page_icon="⚖️", layout="wide")
+st.set_page_config(page_title=APP_TITLE, page_icon="📄", layout="wide")
 
 # Secrets / env
 STRIPE_PUBLIC_KEY = st.secrets.get("STRIPE_PUBLIC_KEY", os.getenv("STRIPE_PUBLIC_KEY", ""))
@@ -40,140 +40,63 @@ BASE_URL          = st.secrets.get("BASE_URL",          os.getenv("BASE_URL", "h
 
 MONTHLY_PRICE_TEXT = "R$ 9,90/mês"
 
+# Hotjar
+HOTJAR_ID = 6519667
+HOTJAR_SV = 6
+
+# CSVs
+VISITS_CSV  = Path("/tmp/visitas.csv")
+CONSULT_CSV = Path("/tmp/consultas.csv")
+
 # -------------------------------------------------
-# Estilo: DoNotPay Inspired + CLARA Identity
+# Estilo: home impecável, centralizada e responsiva
 # -------------------------------------------------
 st.markdown(
     """
     <style>
-    :root {
-        --clara-gold: #D4AF37;
-        --clara-blue: #ABDBF0;
-        --clara-dark: #0f172a;
-        --clara-gray: #475569;
-        --clara-light: #f8fafc;
-    }
-    
-    .clara-hero {
-        background: linear-gradient(135deg, var(--clara-dark) 0%, #1e293b 100%);
-        color: white;
-        padding: 4rem 0;
-        text-align: center;
-        border-radius: 0 0 20px 20px;
-    }
-    
-    .clara-hero-content {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 0 2rem;
-    }
-    
-    .clara-badge {
-        background: var(--clara-gold);
-        color: var(--clara-dark);
-        padding: 0.5rem 1.5rem;
-        border-radius: 50px;
-        font-weight: 700;
-        font-size: 0.9rem;
-        display: inline-block;
-        margin-bottom: 1.5rem;
-    }
-    
-    .clara-title {
-        font-size: 3.5rem;
-        font-weight: 800;
-        margin: 1rem 0;
-        line-height: 1.1;
-    }
-    
-    .clara-subtitle {
-        font-size: 1.3rem;
-        opacity: 0.9;
-        margin-bottom: 2rem;
-        line-height: 1.6;
-    }
-    
-    .clara-card {
-        background: white;
-        border-radius: 16px;
-        padding: 2rem;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        border: 1px solid #e2e8f0;
-        margin: 1rem 0;
-    }
-    
-    .clara-card:hover {
-        transform: translateY(-2px);
-        transition: transform 0.2s ease;
-    }
-    
-    .clara-service-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: 1.5rem;
-        margin: 2rem 0;
-    }
-    
-    .clara-feature {
-        text-align: center;
-        padding: 1.5rem;
-    }
-    
-    .clara-feature-icon {
-        font-size: 2.5rem;
-        margin-bottom: 1rem;
-    }
-    
-    .clara-btn-primary {
-        background: var(--clara-gold) !important;
-        color: var(--clara-dark) !important;
-        border: none !important;
-        font-weight: 600 !important;
-        padding: 0.75rem 1.5rem !important;
-        border-radius: 12px !important;
-    }
-    
-    .clara-btn-primary:hover {
-        background: #B8941F !important;
-        transform: translateY(-1px);
-    }
-    
-    .clara-nav {
-        background: white;
-        padding: 1rem 0;
-        border-bottom: 1px solid #e2e8f0;
-        margin-bottom: 2rem;
-    }
-    
-    .clara-step {
-        display: flex;
-        align-items: center;
-        margin: 1rem 0;
-        padding: 1rem;
-        background: var(--clara-light);
-        border-radius: 12px;
-        border-left: 4px solid var(--clara-gold);
-    }
-    
-    .clara-step-number {
-        background: var(--clara-gold);
-        color: var(--clara-dark);
-        width: 30px;
-        height: 30px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        margin-right: 1rem;
-    }
+      :root{
+        --text:#0f172a; --muted:#475569; --line:#e5e7eb;
+        --brand:#4f46e5; --brand2:#6366f1; --bg:#f8fafc; --card:#ffffff;
+      }
+
+      .page-hero{
+        background:
+          radial-gradient(1200px 500px at 50% -150px, #eef2ff 20%, #fff 60%, #fff 100%);
+        padding: 32px 0 6px;
+      }
+      .wrap{ max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+      .chip{ display:inline-block; padding:6px 12px; border-radius:999px;
+        background:#eef2ff; border:1px solid #e0e7ff; color:#334155; font-weight:600; font-size:12.5px; }
+      .title{ margin: 18px 0 8px; font-size: clamp(34px, 6vw, 58px);
+        font-weight: 800; color: var(--text); letter-spacing:.3px; line-height:1.06; }
+      .subtitle{ max-width: 900px; font-size: 19px; line-height: 1.7; color: var(--muted); margin: 0 0 18px; }
+
+      .hero-cta .stButton > button{
+        background: linear-gradient(90deg, var(--brand), var(--brand2));
+        color: #fff; border: 0; border-radius: 14px; padding: 14px 22px;
+        font-weight: 700; font-size: 17px; box-shadow: 0 8px 24px rgba(79,70,229,.18);
+      }
+      .hero-cta .stButton > button:hover{ filter: brightness(1.03); }
+
+      .pitch{ color:var(--muted); line-height:1.75; font-size:16px; }
+
+      .cards{ display:grid; gap:16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      @media (max-width: 980px){ .cards{ grid-template-columns: 1fr; } }
+      .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
+      .card h4{ margin:4px 0 6px; font-size:18px; color:var(--text);} .card p{ margin:0; color:var(--muted); font-size:15.5px;}
+
+      .section{ background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px; }
+      .soft{ font-size:13px; color:#64748b; }
+
+      /* evita scroll horizontal em expander */
+      .no-overflow div[role="region"]{ overflow-x: hidden !important; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # -------------------------------------------------
-# Estado (mantido da versão original)
+# Estado
 # -------------------------------------------------
 if "started" not in st.session_state:
     st.session_state.started = False
@@ -183,11 +106,9 @@ if "premium" not in st.session_state:
     st.session_state.premium = False
 if "free_runs_left" not in st.session_state:
     st.session_state.free_runs_left = 1
-if "current_view" not in st.session_state:
-    st.session_state.current_view = "home"
 
 # -------------------------------------------------
-# Utils / Admin / Validações (mantido da versão original)
+# Utils / Admin / Validações
 # -------------------------------------------------
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 PHONE_RE = re.compile(r"^\+?\d{10,15}$")
@@ -238,9 +159,24 @@ def stripe_diagnostics() -> Tuple[bool, str]:
     if not STRIPE_PRICE_ID.startswith("price_"): return False, "O STRIPE_PRICE_ID deve começar com **price_...**"
     return True, ""
 
-# -------------------------------------------------
-# CSV helpers (mantido da versão original)
-# -------------------------------------------------
+def inject_hotjar(hjid: int = HOTJAR_ID, hjsv: int = HOTJAR_SV):
+    st.markdown(
+        f"""
+        <script>
+        (function(h,o,t,j,a,r){{
+          h.hj=h.hj||function(){{(h.hj.q=h.hj.q||[]).push(arguments)}};
+          h._hjSettings={{hjid:{hjid},hjsv:{hjsv}}};
+          a=o.getElementsByTagName('head')[0];
+          r=o.createElement('script');r.async=1;
+          r.src='https://static.hotjar.com/c/hotjar-'+h._hjSettings.hjid+'.js?sv='+h._hjSettings.hjsv;
+          a.appendChild(r);
+        }})(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ---- CSV helpers ----
 def _ensure_csv(path: Path, header: List[str]):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -260,8 +196,31 @@ def read_visits() -> List[Dict[str, str]]:
     with VISITS_CSV.open("r", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
+def log_consultation(payload: Dict[str, Any]):
+    _ensure_csv(CONSULT_CSV, ["ts_utc","nome","email","cel","papel","setor","valor_max","texto_len"])
+    row = [
+        datetime.utcnow().isoformat(),
+        st.session_state.profile.get("nome",""),
+        st.session_state.profile.get("email",""),
+        st.session_state.profile.get("cel",""),
+        st.session_state.profile.get("papel",""),
+        payload.get("setor",""),
+        payload.get("valor_max",""),
+        payload.get("texto_len",""),
+    ]
+    with CONSULT_CSV.open("a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(row)
+
+def serve_csv_downloads():
+    if VISITS_CSV.exists():
+        with VISITS_CSV.open("rb") as f:
+            st.download_button("📥 Baixar visitas (CSV)", f, file_name="visitas.csv", mime="text/csv")
+    if CONSULT_CSV.exists():
+        with CONSULT_CSV.open("rb") as f:
+            st.download_button("📥 Baixar consultas (CSV)", f, file_name="consultas.csv", mime="text/csv")
+
 # -------------------------------------------------
-# Boot (Stripe + DB) - mantido
+# Boot (Stripe + DB)
 # -------------------------------------------------
 @st.cache_resource(show_spinner="Preparando…")
 def _boot() -> Tuple[bool, str]:
@@ -279,344 +238,369 @@ if not ok_boot:
     st.error(boot_msg); st.stop()
 
 # -------------------------------------------------
-# Novas Views Inspiradas no DoNotPay
+# Tela 1 — Home perfeita (alinhada e centrada)
 # -------------------------------------------------
-def render_navigation():
-    """Navegação moderna inspirada no DoNotPay"""
-    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
-    
-    with col1:
-        st.markdown(f"<h3 style='color: var(--clara-gold); margin: 0;'>CLARA LAW</h3>", unsafe_allow_html=True)
-    
-    with col2:
-        if st.button("🏠 Início", use_container_width=True):
-            st.session_state.current_view = "home"
-            st.session_state.started = False
-    
-    with col3:
-        if st.button("🛡️ Serviços", use_container_width=True):
-            st.session_state.current_view = "services"
-    
-    with col4:
-        if st.button("📄 Analisar", use_container_width=True):
-            st.session_state.current_view = "analysis"
-            st.session_state.started = True
-    
-    with col5:
-        if st.button("⭐ Premium", use_container_width=True):
-            st.session_state.current_view = "premium"
 
-def render_hero_section():
-    """Hero section moderna inspirada no DoNotPay"""
-    st.markdown("""
-    <div class="clara-hero">
-        <div class="clara-hero-content">
-            <div class="clara-badge">🤖 SUA ASSISTENTE JURÍDICA PESSOAL</div>
-            <h1 class="clara-title">Resolva problemas jurídicos sem complicação</h1>
-            <p class="clara-subtitle">
-                A CLARA usa inteligência artificial para te ajudar a entender contratos, 
-                resolver disputas e proteger seus direitos de forma simples e acessível.
-            </p>
-    """, unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("👉 Começar Agora", key="hero_cta", use_container_width=True):
-            st.session_state.current_view = "services"
-    
-    st.markdown("</div></div>", unsafe_allow_html=True)
-
-def render_services_view():
-    """Grid de serviços ao estilo DoNotPay"""
-    st.markdown("""
-    <div style='text-align: center; margin: 3rem 0;'>
-        <h2>Como a CLARA pode te ajudar hoje?</h2>
-        <p>Escolha o serviço que você precisa:</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown('<div class="clara-service-grid">', unsafe_allow_html=True)
-    
-    services = [
-        {
-            "icon": "📄",
-            "title": "Análise de Contratos",
-            "description": "Entenda o que realmente está escrito em contratos complexos",
-            "action": "Analisar Contrato"
-        },
-        {
-            "icon": "💰", 
-            "title": "Disputas Financeiras",
-            "description": "Recupere cobranças indevidas e dispute taxas abusivas",
-            "action": "Resolver Disputa"
-        },
-        {
-            "icon": "🏠",
-            "title": "Direito do Consumidor", 
-            "description": "Proteja-se contra práticas abusivas e produtos defeituosos",
-            "action": "Proteger Direitos"
-        },
-        {
-            "icon": "📊",
-            "title": "Cálculo de CET",
-            "description": "Descubra o custo real de empréstimos e financiamentos",
-            "action": "Calcular CET"
-        },
-        {
-            "icon": "⚖️",
-            "title": "Modelos Jurídicos",
-            "description": "Acesse modelos de documentos e notificações pré-formatados",
-            "action": "Ver Modelos"
-        },
-        {
-            "icon": "🔒",
-            "title": "LGPD e Privacidade",
-            "description": "Entenda seus direitos sobre proteção de dados pessoais",
-            "action": "Proteger Dados"
-        }
-    ]
-    
-    for i, service in enumerate(services):
-        with st.container():
-            st.markdown(f"""
-            <div class="clara-card">
-                <div style='text-align: center;'>
-                    <div class="clara-feature-icon">{service['icon']}</div>
-                    <h3>{service['title']}</h3>
-                    <p style='color: var(--clara-gray);'>{service['description']}</p>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if st.button(service['action'], key=f"service_{i}", use_container_width=True):
-                if service['title'] == "Análise de Contratos":
-                    st.session_state.current_view = "analysis"
-                    st.session_state.started = True
-                    st.rerun()
-
-def render_home_view():
-    """Página inicial completa"""
-    render_hero_section()
-    
-    # Seção de valores
-    st.markdown("""
-    <div style='padding: 4rem 0;'>
-        <div style='max-width: 800px; margin: 0 auto; text-align: center;'>
-            <h2>Por que escolher a CLARA?</h2>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        <div class="clara-feature">
-            <div class="clara-feature-icon">🛡️</div>
-            <h4>Proteção</h4>
-            <p>Detecta multas abusivas, travas de cancelamento e riscos escondidos em contratos</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div class="clara-feature">
-            <div class="clara-feature-icon">🧩</div>
-            <h4>Linguagem Simples</h4>
-            <p>Traduz termos jurídicos complexos para uma linguagem que qualquer pessoa entende</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("""
-        <div class="clara-feature">
-            <div class="clara-feature-icon">📈</div>
-            <h4>Transparência</h4>
-            <p>Mostra o custo real de financiamentos e ajuda a comparar propostas</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Chamada para ação
-    st.markdown("""
-    <div style='text-align: center; margin: 3rem 0;'>
-        <h3>Pronto para resolver seus problemas jurídicos?</h3>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🎯 Ver Todos os Serviços", use_container_width=True):
-            st.session_state.current_view = "services"
-
-# -------------------------------------------------
-# Views Originais Adaptadas
-# -------------------------------------------------
 def first_screen():
-    """Tela inicial original adaptada"""
-    if st.session_state.current_view == "home":
-        render_home_view()
-        return
-        
-    if st.session_state.current_view == "services":
-        render_services_view()
-        return
-        
-    # View padrão (análise)
-    st.markdown("""
-    <div style='max-width: 800px; margin: 0 auto; padding: 2rem 0;'>
-        <div style='text-align: center; margin-bottom: 3rem;'>
-            <h1>Análise de Contratos</h1>
-            <p>Envie seu contrato e a CLARA vai destacar os pontos importantes em linguagem simples</p>
+    inject_hotjar()
+    st.markdown('<div class="page-hero"><div class="wrap">', unsafe_allow_html=True)
+
+    # chip + título + subtítulo
+    st.markdown(f'<span class="chip">CLARA • {VERSION}</span>', unsafe_allow_html=True)
+    st.markdown('<div class="title">Entenda o que você está assinando</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="subtitle">
+          A CLARA lê seu contrato, explica <b>em palavras simples</b>
+          e mostra o que pode ser <b>problema</b> — como multas altas,
+          travas de cancelamento e responsabilidades exageradas.
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # CTA central real (coluna do meio)
+    st.markdown('<div class="hero-cta">', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1,1,1])
+    with c2:
+        if st.button("Iniciar análise do meu contrato", key="btn_start"):
+            st.session_state.started = True
+            try: st.cache_data.clear()
+            except Exception: pass
+            try: st.cache_resource.clear()
+            except Exception: pass
+            st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # pitch alinhada
+    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="pitch">
+          <p><b>Problema real:</b> milhões de brasileiros assinam documentos sem entender por completo.
+             A frase “eu li e concordo” virou símbolo dessa crise silenciosa.
+             Isso expõe pessoas e empresas a riscos que poderiam ser evitados.</p>
+          <p><b>Como ajudamos:</b> você envia o contrato e recebe
+             <b>trechos críticos + explicações simples + dicas de negociação</b>.
+             Use a CLARA como apoio para conversar com a outra parte e, se precisar, para levar ao seu advogado(a).</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # cards de valor
+    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+    st.markdown('<div class="cards">', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="card"><h4>🛡️ Proteção</h4><p>Detecta multas fora da realidade, travas de cancelamento e riscos escondidos.</p></div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="card"><h4>🧩 Linguagem simples</h4><p>Traduz termos como <b>foro</b> (onde um processo corre), <b>LGPD</b> (regras de dados) e <b>rescisão</b> (como encerrar).</p></div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="card"><h4>📈 CET</h4><p>Mostra o custo total de um financiamento (juros + tarifas + taxas) para comparar propostas.</p></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)  # /cards
+
+    st.markdown('</div></div>', unsafe_allow_html=True)  # /wrap /page-hero
+
+# -------------------------------------------------
+# Sidebar — cadastro (opcional) + admin
+# -------------------------------------------------
 
 def sidebar_profile():
-    """Sidebar original mantida com melhorias visuais"""
-    st.sidebar.markdown("### 👤 Seus Dados")
-    
-    with st.sidebar.container():
-        nome  = st.text_input("Nome completo", value=st.session_state.profile.get("nome",""))
-        email = st.text_input("E-mail", value=st.session_state.profile.get("email",""))
-        cel   = st.text_input("Celular", value=st.session_state.profile.get("cel",""))
-        papel = st.selectbox("Você é o contratante?", ["Contratante","Contratado","Outro"],
-                            index=["Contratante","Contratado","Outro"].index(st.session_state.profile.get("papel","Contratante")))
+    st.sidebar.header("👤 Seus dados (opcional)")
+    nome  = st.sidebar.text_input("Nome completo", value=st.session_state.profile.get("nome",""))
+    email = st.sidebar.text_input("E-mail",        value=st.session_state.profile.get("email",""))
+    cel   = st.sidebar.text_input("Celular",       value=st.session_state.profile.get("cel",""))
+    papel = st.sidebar.selectbox("Você é o contratante?", ["Contratante","Contratado","Outro"],
+                                 index=["Contratante","Contratado","Outro"].index(st.session_state.profile.get("papel","Contratante")))
 
-        if st.button("💾 Salvar dados", use_container_width=True):
-            errors = []
-            if email and not is_valid_email(email):
-                errors.append("E-mail inválido.")
-            if cel and not is_valid_phone(cel):
-                errors.append("Celular inválido.")
-            if errors:
-                st.error(" • ".join(errors))
-            else:
-                st.session_state.profile = {"nome":nome.strip(),"email":email.strip(),"cel":cel.strip(),"papel":papel}
-                try: 
-                    log_visit(email.strip())
-                    if current_email() and get_subscriber_by_email(current_email()):
-                        st.session_state.premium = True
-                except Exception: pass
-                st.success("Dados salvos!")
+    if st.sidebar.button("Salvar dados", use_container_width=True):
+        errors = []
+        if email and not is_valid_email(email):
+            errors.append("E-mail inválido.")
+        if cel and not is_valid_phone(cel):
+            errors.append("Celular inválido (use somente números, com DDD).")
+        if errors:
+            st.sidebar.error(" • ".join(errors))
+        else:
+            st.session_state.profile = {"nome":nome.strip(),"email":email.strip(),"cel":cel.strip(),"papel":papel}
+            try: log_visit(email.strip())
+            except Exception: pass
+            try:
+                if current_email() and get_subscriber_by_email(current_email()):
+                    st.session_state.premium = True
+            except Exception:
+                pass
+            st.sidebar.success("Dados salvos!")
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Administração")
+    if current_email() in ADMIN_EMAILS:
+        if st.sidebar.checkbox("Área administrativa"):
+            st.sidebar.success("Admin ativo")
+            try:
+                subs = list_subscribers()
+                with st.sidebar.expander("👥 Assinantes (Stripe)", expanded=False):
+                    st.write(subs if subs else "Nenhum assinante ainda.")
+            except Exception as e:
+                st.sidebar.error(f"Não foi possível listar assinantes: {e}")
+
+            try:
+                visits = read_visits()
+                with st.sidebar.expander("👣 Últimas visitas", expanded=False):
+                    if not visits:
+                        st.write("Sem registros.")
+                    else:
+                        for v in reversed(visits[-50:]):
+                            st.write(f"{v.get('ts_utc','')} — {v.get('email','')}")
+            except Exception as e:
+                st.sidebar.error(f"Não foi possível ler visitas: {e}")
+
+            with st.sidebar.expander("📦 Exportar CSV", expanded=False):
+                serve_csv_downloads()
 
 # -------------------------------------------------
-# Funções Originais Mantidas (com pequenas melhorias)
+# Preço / Stripe (banner discreto)
 # -------------------------------------------------
+
+def pricing_card():
+    st.markdown('<div class="section"><div class="section-title" style="font-weight:800;">Plano Premium</div>', unsafe_allow_html=True)
+    st.caption(f"{MONTHLY_PRICE_TEXT} • análises ilimitadas • suporte prioritário")
+
+    okS, msgS = stripe_diagnostics()
+    email = current_email()
+
+    if not email:
+        st.info("Preencha e salve seu e-mail na barra lateral para assinar. A análise gratuita continua liberada sem cadastro.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+
+    if st.button("💳 Assinar Premium agora", use_container_width=True):
+        if not okS:
+            st.error(msgS)
+        else:
+            try:
+                sess = create_checkout_session(
+                    price_id=STRIPE_PRICE_ID,
+                    customer_email=email,
+                    success_url=f"{BASE_URL}?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+                    cancel_url=f"{BASE_URL}?canceled=true",
+                )
+                if sess.get("url"):
+                    st.success("Sessão criada! Clique abaixo para abrir o checkout seguro.")
+                    st.link_button("👉 Abrir checkout seguro", sess["url"], use_container_width=True)
+                else:
+                    st.error(sess.get("error", "Stripe indisponível no momento."))
+            except Exception as e:
+                st.error(f"Stripe indisponível no momento. Detalhe: {e}")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def handle_checkout_result():
+    qs = st.query_params
+    if qs.get("success") == "true" and qs.get("session_id"):
+        sid = qs["session_id"]
+        try:
+            ok, payload = verify_checkout_session(sid)
+        except Exception as e:
+            st.error(f"Não foi possível confirmar o pagamento: {e}")
+            ok, payload = False, {}
+
+        if ok:
+            try:
+                log_subscriber(
+                    email=current_email(),
+                    name=st.session_state.profile.get("nome",""),
+                    stripe_customer_id=(payload.get("customer") or (payload.get("subscription") or {}).get("customer") or "")
+                )
+            except Exception:
+                pass
+            st.session_state.premium = True
+            st.success("Pagamento confirmado! Premium liberado ✅")
+        else:
+            st.warning("Não conseguimos confirmar essa sessão. Tente novamente.")
+        try: st.query_params.clear()
+        except Exception: pass
+
+# -------------------------------------------------
+# Conteúdo + preço (após iniciar)
+# -------------------------------------------------
+
+def landing_block():
+    st.markdown('<div class="section">', unsafe_allow_html=True)
+    st.markdown("### O que você recebe")
+    st.write("• Trechos críticos do contrato → **explicados em linguagem simples**.")
+    st.write("• Sinais de alerta (multas altas, travas, riscos): **o que significam** e **como negociar**.")
+    st.write("• **Relatório** para compartilhar com seu time ou advogado(a).")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("")
+    pricing_card()
+
+# -------------------------------------------------
+# Upload / Inputs / CET / Resultado
+# -------------------------------------------------
+
 def upload_or_paste_section() -> str:
-    st.markdown("### 📄 1) Envie o contrato")
-    
-    tab1, tab2 = st.tabs(["📤 Upload PDF", "📝 Colar Texto"])
-    
-    with tab1:
-        f = st.file_uploader("Faça upload do PDF", type=["pdf"], label_visibility="collapsed")
-        raw = ""
-        if f:
-            with st.spinner("Lendo PDF…"):
-                raw = extract_text_from_pdf(f)
-    
-    with tab2:
-        raw = st.text_area("Cole o texto do contrato:", height=200, value=raw or "", 
-                          placeholder="Copie e cole o texto do contrato aqui...")
-    
+    st.subheader("1) Envie o contrato")
+    f = st.file_uploader("PDF do contrato", type=["pdf"])
+    raw = ""
+    if f:
+        with st.spinner("Lendo PDF…"):
+            raw = extract_text_from_pdf(f)
+    st.markdown("Ou cole o texto abaixo:")
+    raw = st.text_area("Texto do contrato", height=220, value=raw or "")
     return raw
 
+
 def analysis_inputs() -> Dict[str, Any]:
-    st.markdown("### 🎯 2) Contexto da Análise")
-    
-    col1, col2, col3 = st.columns(3)
-    setor = col1.selectbox("Setor", ["Genérico","SaaS/Serviços","Empréstimos","Educação","Plano de saúde"])
-    papel = col2.selectbox("Seu Papel", ["Contratante","Contratado","Outro"])
-    valor = col3.number_input("Valor (R$)", min_value=0.0, step=100.0, 
-                             help="Valor máximo envolvido no contrato")
-    
-    return {"setor": setor, "papel": papel, "limite_valor": valor}
+    st.subheader("2) Contexto")
+    c1,c2,c3 = st.columns(3)
+    setor = c1.selectbox("Setor", ["Genérico","SaaS/Serviços","Empréstimos","Educação","Plano de saúde"])
+    papel = c2.selectbox("Perfil", ["Contratante","Contratado","Outro"])
+    valor = c3.number_input("Valor máx. (opcional)", min_value=0.0, step=100.0)
+    return {"setor":setor, "papel":papel, "limite_valor":valor}
+
+
+def cet_calculator_block():
+    with st.expander("📈 Calculadora de CET (opcional)", expanded=False):
+        c1,c2,c3 = st.columns(3)
+        P   = c1.number_input("Valor principal (R$)", min_value=0.0, step=100.0, key="cet_p")
+        i_m = c2.number_input("Juros mensais (%)", min_value=0.0, step=0.1, key="cet_i")
+        n   = c3.number_input("Parcelas (n)", min_value=1, step=1, key="cet_n")
+        fee = st.number_input("Taxas fixas totais (R$)", min_value=0.0, step=10.0, key="cet_fee")
+        if st.button("Calcular CET", key="btn_calc_cet"):
+            cet = compute_cet_quick(P, i_m/100.0, int(n), fee)
+            st.success(f"**CET aproximado:** {cet*100:.2f}% ao mês")
+
+
+def _wrap_text_box(label: str, content: str, h: int = 160):
+    """Exibe texto sem scroll horizontal (caixa fixa e somente vertical)."""
+    st.text_area(label, value=content, height=h, disabled=True)
+
+
+def _build_share_email(resumo: str) -> str:
+    return f"""Assunto: Solicitação de revisão de cláusulas contratuais
+
+Olá,
+
+Envio, por gentileza, os principais pontos identificados na análise inicial do contrato:
+
+- {resumo}
+
+Poderia avaliar as cláusulas destacadas (multas, reajuste, foro e responsabilidades) e sugerir eventuais ajustes de redação para mitigar riscos?
+
+Fico à disposição.
+
+Atenciosamente,
+{st.session_state.profile.get('nome') or '—'}
+"""
+
 
 def results_section(text: str, ctx: Dict[str, Any]):
-    """Seção de resultados melhorada"""
+    st.subheader("4) Resultado")
+
     if not text.strip():
-        st.warning("📝 Envie o contrato (PDF) ou cole o texto para analisar.")
+        st.warning("Envie o contrato (PDF) ou cole o texto para analisar.")
         return
 
+    # Análise gratuita SEM obrigar cadastro
     if not is_premium() and st.session_state.free_runs_left <= 0:
-        st.info("""
-        🚀 **Você usou sua análise gratuita** 
-        
-        Assine o **CLARA Premium** para análises ilimitadas e recursos exclusivos!
-        """)
+        st.info("Você usou sua análise gratuita. **Assine o Premium** para continuar.")
         return
 
-    with st.spinner("🔍 CLARA está analisando seu contrato..."):
+    with st.spinner("Analisando…"):
         hits, meta = analyze_contract_text(text, ctx)
 
     if not is_premium():
         st.session_state.free_runs_left -= 1
 
-    # Logs (mantido da versão original)
-    email_for_log = current_email()
+    # logs
+    email_for_log = current_email()  # pode estar vazio (grátis sem cadastro)
     log_analysis_event(email=email_for_log, meta={"setor":ctx["setor"], "papel":ctx["papel"], "len":len(text)})
+    log_consultation({"setor":ctx["setor"], "valor_max":ctx["limite_valor"], "texto_len":len(text)})
 
     resume = summarize_hits(hits)
-    
-    # Resultados visuais melhorados
-    st.success(f"**Análise concluída!** {resume['resumo']}")
-    
-    # Métricas
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Pontos Analisados", len(hits))
-    with col2:
-        st.metric("Gravidade", resume['gravidade'])
-    with col3:
-        st.metric("Pontos Críticos", resume['criticos'])
-    
-    # Detalhamento
-    st.markdown("### 📋 Pontos de Atenção")
+    st.success(f"Resumo: {resume['resumo']}")
+    st.write(f"Gravidade: **{resume['gravidade']}** | Pontos críticos: **{resume['criticos']}** | Itens analisados: {len(hits)}")
+
+    # Pontos
+    st.markdown("<div class='no-overflow'>", unsafe_allow_html=True)
     for h in hits:
         with st.expander(f"{h['severity']} • {h['title']}", expanded=False):
-            st.write(h.get("explanation", ""))
+            st.write(h.get("explanation", ""))               # linguagem simples
             if h.get("suggestion"):
-                st.info(f"💡 **Como negociar:** {h['suggestion']}")
+                st.markdown(f"**Como negociar:** {h['suggestion']}")
             if h.get("evidence"):
-                st.text_area("📜 Trecho do contrato:", value=h["evidence"][:800], 
-                           height=100, disabled=True)
+                # Evita scroll horizontal: caixa de texto somente leitura
+                _wrap_text_box("Trecho do contrato (referência)", h["evidence"][:800])
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    cet_calculator_block()
+
+    # Relatório .txt
+    buff = io.StringIO()
+    buff.write(f"{APP_TITLE} {VERSION}\n")
+    buff.write(f"Usuário: {st.session_state.profile.get('nome','')} <{email_for_log or 'sem e-mail'}>  •  Papel: {ctx['papel']}\n")
+    buff.write(f"Setor: {ctx['setor']}  |  Valor máx.: {ctx['limite_valor']}\n\n")
+    buff.write(f"Resumo: {resume['resumo']} (Gravidade: {resume['gravidade']})\n\n")
+    buff.write("Pontos de atenção:\n")
+    for h in hits:
+        buff.write(f"- [{h['severity']}] {h['title']} — {h.get('explanation','')}\n")
+        if h.get("suggestion"):
+            buff.write(f"  Como negociar: {h['suggestion']}\n")
+    st.download_button("📥 Baixar relatório (txt)", data=buff.getvalue(), file_name="relatorio_clara.txt", mime="text/plain")
+
+    # Botão para gerar e-mail (copiar/baixar)
+    st.markdown("### Gerar e-mail para advogado/contraparte")
+    email_text = _build_share_email(resume.get('resumo', ''))
+    st.text_area("Copie e cole:", email_text, height=220)
+    st.download_button("Baixar e-mail (.txt)", data=email_text.encode("utf-8"), file_name="email_para_advogado.txt", mime="text/plain")
+
+    # Ações auxiliares
+    colA, colB = st.columns(2)
+    with colA:
+        if st.button("🔄 Recomeçar (voltar ao início)"):
+            st.session_state.started = False
+            st.rerun()
+    with colB:
+        st.caption("Dica: preencha seus dados na barra lateral para salvar histórico e assinar o Premium, se quiser.")
 
 # -------------------------------------------------
-# Main Adaptada
+# Main (single page)
 # -------------------------------------------------
+
 def main():
-    # Navegação moderna
-    render_navigation()
-    
-    # Controle de views
-    if st.session_state.current_view in ["home", "services"]:
-        first_screen()
-        return
-        
-    # View de análise (original)
     if not st.session_state.started:
         first_screen()
         return
 
-    # Sidebar mantida
+    # Barra lateral sempre visível
     sidebar_profile()
-    
-    # Conteúdo principal
-    st.markdown("""
-    <div style='max-width: 1000px; margin: 0 auto;'>
-        <div style='text-align: center; margin-bottom: 2rem;'>
-            <h1>Análise de Contrato</h1>
-            <p>Siga os passos abaixo para analisar seu contrato</p>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Processo guiado
+    handle_checkout_result()
+    landing_block()
+
+    st.markdown("---")
+    st.markdown("### Comece sua análise")
+    st.caption("Envie o contrato. O cadastro é opcional para a análise gratuita.")
+
     texto = upload_or_paste_section()
-    ctx = analysis_inputs()
-    
-    st.markdown("### 🚀 3) Analisar")
-    if st.button("✨ Analisar Contrato com CLARA", type="primary", use_container_width=True):
+    ctx   = analysis_inputs()
+
+    if st.button("🚀 Analisar agora", use_container_width=True):
         results_section(texto, ctx)
+
+    st.markdown("---")
+    # Banner Premium também no rodapé (discreto)
+    with st.container():
+        st.info("🔓 Clara Premium (opcional): relatórios ilimitados, histórico e suporte prioritário. A análise gratuita continua disponível.")
+
+    st.markdown(
+        '<p class="soft">A CLARA complementa sua leitura e negociação, mas <b>não substitui</b> a orientação de um(a) advogado(a).</p>',
+        unsafe_allow_html=True
+    )
 
 if __name__ == "__main__":
     main()
+
+
+
